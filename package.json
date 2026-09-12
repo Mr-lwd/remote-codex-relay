@@ -24,7 +24,7 @@
   },
   "devDependencies": {
     "prettier": "3.6.2",
-    "vite": "^6.3.5"
+    "vite": "^8.2.2"
   },
   "description": "A self-hosted web console for local Codex sessions, tasks and attachments",
   "license": "MIT",
