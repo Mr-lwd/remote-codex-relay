@@ -9,13 +9,18 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from server.config import settings
+from server.config import load_settings
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--skip-codex", action="store_true", help="Check build/runtime only (CI)")
     args = parser.parse_args()
+    try:
+        settings = load_settings()
+    except (ValueError, OSError) as error:
+        print(f"FAIL: 配置无效：{error}。请运行 bash scripts/relay.sh status。")
+        return True
     failures = []
 
     def check(ok, label):
@@ -39,8 +44,21 @@ def main():
             version = importlib.metadata.version(dependency)
         except importlib.metadata.PackageNotFoundError:
             version = None
-        check(version is not None, f"{dependency}: {version or 'run scripts/setup.sh'}")
-    check((settings.dist_dir / "index.html").is_file(), "Frontend built (npm ci && npm run build)")
+        check(
+            version is not None, f"{dependency}: {version or '运行 bash scripts/relay.sh repair'}"
+        )
+    from scripts.relay_manager import frontend_ready, venv_origin
+
+    root = Path(__file__).resolve().parent.parent
+    check(
+        frontend_ready(settings.dist_dir), "前端文件完整；缺失时运行 bash scripts/relay.sh repair"
+    )
+    origin = venv_origin(root)
+    check(
+        origin is None or origin == root,
+        "虚拟环境路径有效；移动项目后运行 bash scripts/relay.sh repair",
+    )
+    print(f"INFO: 当前项目目录：{root}")
     check(settings.workspace_root.is_dir(), "Workspace root exists")
     check(settings.default_cwd.is_dir(), "Default working directory exists")
     print(f"INFO: Relay data: {settings.data_dir}")

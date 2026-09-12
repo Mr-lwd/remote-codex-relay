@@ -18,7 +18,7 @@ from datetime import datetime
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Request, Response, Query
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel, Field
@@ -27,7 +27,9 @@ from server.codex_rpc import CodexRPC, receive_request, permission_settings
 from server.directories import browse, work_directory, WORKSPACE_ROOT
 
 from server.config import ROOT, settings
+from server import __version__
 from server.storage import connect, initialize, access_password
+from server.maintenance import maintenance_lock
 
 DATA = settings.data_dir
 DIST = settings.dist_dir
@@ -88,7 +90,9 @@ async def discover_models():
 
     try:
         async with asyncio.timeout(15):
-            await rpc(1, "initialize", {"clientInfo": {"name": "codex_relay", "version": "1.0.0"}})
+            await rpc(
+                1, "initialize", {"clientInfo": {"name": "codex_relay", "version": __version__}}
+            )
             proc.stdin.write(b'{"method":"initialized","params":{}}\n')
             await proc.stdin.drain()
             models, cursor, ident = [], None, 2
@@ -531,7 +535,12 @@ async def lifespan(app):
 
 
 app = FastAPI(
-    title="Codex Relay", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
+    title="Codex Relay",
+    version=__version__,
+    lifespan=lifespan,
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
 )
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -546,7 +555,16 @@ async def protect(request, call_next):
             return Response("Unauthorized", status_code=401)
         if request.method not in ("GET", "HEAD") and request.headers.get("x-relay-request") != "1":
             return Response("Invalid request origin", status_code=403)
-    response = await call_next(request)
+    if path.startswith("/api/") and request.method not in ("GET", "HEAD", "OPTIONS"):
+        with contextlib.ExitStack() as locks:
+            try:
+                locks.enter_context(maintenance_lock(DATA))
+            except (BlockingIOError, FileNotFoundError):
+                response = JSONResponse({"detail": "服务正在维护，请稍后重试。"}, status_code=503)
+            else:
+                response = await call_next(request)
+    else:
+        response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "no-referrer"
@@ -1636,5 +1654,15 @@ async def frontend(path: str):
     if path.startswith("api/"):
         raise HTTPException(404)
     if not (DIST / "index.html").is_file():
-        raise HTTPException(503, "Frontend is not built. Run npm ci && npm run build.")
+        return HTMLResponse(
+            "<!doctype html><html lang='zh-CN'><meta charset='utf-8'>"
+            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+            "<title>工作台暂时不可用</title>"
+            "<body style='font-family:system-ui,sans-serif;max-width:40rem;margin:12vh auto;padding:24px'>"
+            "<h1>工作台暂时不可用</h1><p>前端文件缺失，或项目移动后服务仍在使用旧路径。</p>"
+            "<p>请管理员在当前项目目录执行：</p><pre>bash scripts/relay.sh repair</pre>"
+            "<p>修复完成后刷新此页面。已有数据不会因此被清除。</p></body></html>",
+            status_code=503,
+            headers={"Cache-Control": "no-store"},
+        )
     return FileResponse(DIST / "index.html")

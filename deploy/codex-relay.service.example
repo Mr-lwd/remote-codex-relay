@@ -1,4 +1,5 @@
 [Unit]
+# Prefer bash scripts/relay.sh start to generate paths and the current Node environment.
 Description=Codex Relay web console
 After=network-online.target
 

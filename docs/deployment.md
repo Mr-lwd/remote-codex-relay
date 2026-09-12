@@ -4,19 +4,23 @@
 
 ## systemd 用户服务
 
-1. 将 `deploy/codex-relay.service.example` 复制为 `~/.config/systemd/user/codex-relay.service`（先创建目录）。
-2. 替换模板中的两个 `/ABSOLUTE/PATH/codex-relay`。如果安装目录包含空格，用双引号包住 `WorkingDirectory` 的值与 `ExecStart` 的可执行文件路径。
-3. 核对 `PATH`：非交互服务不会自动加载 `.bashrc`、nvm。把 Node 的目录加入模板的 PATH；Codex 可在 `relay.toml` 中配置为绝对路径。服务使用运行用户自己的 Codex home。
-4. 启动服务：
+推荐由统一管理命令生成当前目录的服务配置：
 
-   ```bash
-   systemctl --user daemon-reload
-   systemctl --user enable --now codex-relay
-   systemctl --user status codex-relay
-   journalctl --user -u codex-relay -f
-   ```
+```bash
+bash scripts/relay.sh start
+bash scripts/relay.sh status
+bash scripts/relay.sh logs
+# 需要用户服务自启动时显式设置：
+bash scripts/relay.sh start --enable
+```
 
-需要退出 SSH 后继续运行并随服务器启动，可由管理员执行 `sudo loginctl enable-linger "$USER"`。更改配置后，等待所有任务结束再 `systemctl --user restart codex-relay`。
+生成的单元位于 `~/.config/systemd/user/codex-relay.service`（遵循 `XDG_CONFIG_HOME`），包含实例标识、正确转义的路径及运行环境。首次可接管本项目原有的标准 Python 启动单元；其他项目的同名服务、自定义启动命令、EnvironmentFile 或 drop-in 配置会提示人工核对，不直接覆盖。
+
+Node 查找顺序为当前 PATH、已有服务 PATH，以及用户目录内已安装的 Node/nvm/mise 版本，只接受 22/24。管理器保留原服务环境并应用当前的 Relay/Codex 配置覆盖，生成的环境文件只允许当前用户读写。不会加载 shell 初始化脚本或更改 Codex 登录。
+
+需要退出 SSH 后继续运行并随服务器启动，可由管理员执行 `sudo loginctl enable-linger "$USER"`。更改配置后使用 `bash scripts/relay.sh restart`。没有用户 systemd 或使用 `start --foreground` 时在前台运行；可在另一个终端执行 `stop`，或在前台按 Ctrl+C。前台模式的安装记录会使后续管理命令继续管理同一个前台实例。
+
+高级用户仍可使用 `deploy/codex-relay.service.example` 手动安装服务；自行维护其绝对路径与 PATH。直接使用 systemctl 或 Ctrl+C 不会经过管理器的任务检查，应自行等待任务结束。
 
 ## Nginx 和 HTTPS
 
@@ -34,13 +38,21 @@
 ## 更新与回滚
 
 1. 在网页暂停所有目标，等待当前执行及队列结束。停服务。备份现有代码版本、构建产物、配置与完整运行数据。
-2. 更新源码，运行 `bash scripts/setup.sh`，运行诊断及相应测试。安装脚本不会覆盖已有 `relay.toml`。
-3. 启动服务并重新验证登录、真实会话及收发附件。不要对任务仍在运行的服务使用开发热重载。
+2. 更新源码，运行相应测试，再执行 `bash scripts/relay.sh repair`。管理器按依赖与源码指纹决定是否安装和构建，配置与依赖未变化时不重复下载。
+3. 服务恢复后重新验证登录、真实会话及收发附件。不要对任务仍在运行的服务使用开发热重载。
 4. 失败时停服，恢复旧代码、配置、依赖锁对应的环境及备份数据，再启动。不要仅回滚前端来掩盖数据库或协议不兼容。
 
 旧浏览器标签可能持有旧的静态资源文件名，升级后请刷新页面。第一次采用此发布版时无需更改原有运行目录；新增配置有通用默认值，原环境变量继续生效。
 
 ## 备份和迁移
+
+同机改名或移动项目时，先执行 `bash scripts/relay.sh stop`，移动完整项目后在新目录执行 `bash scripts/relay.sh repair`。不依赖原 `.venv` 是否可用；启动脚本使用系统 Python 识别自己的真实位置。相对配置随项目移动；指向旧项目内部的绝对路径会在验证、备份后更新，项目外部的路径保持原值。路径重写可能重新排版 TOML，原文件保留在备份中。
+
+`runtime/manager.json` 记录原安装位置、实例标识和依赖指纹，需随项目保留。首次修复没有管理记录的安装时参考虚拟环境与现有单元；证据冲突、旧目录仍存在时停止，不猜测或扫描磁盘接管项目。管理记录与安装日志固定保存在项目 `runtime/`，应用数据仍使用 `paths.data_dir`。
+
+被替换文件或目录的备份放在原位置旁，名称为 `.原名称.relay-backup-随机值`。失败产物保留为 `.原名称.relay-failed-随机值`，原文件会恢复；失败详情见 `runtime/manager.log`。确认修复完成后可自行清理这些备份以释放空间。系统服务日志使用 journal，前台服务日志使用 `data_dir/server.log`，`logs` 命令会选择对应来源。
+
+维护命令使用当前用户状态目录中的互斥锁，并在读取任务状态到服务恢复期间阻止新的 HTTP 写请求。存在执行任务、排队消息或执行指令时拒绝停止/重启；进程已经异常退出但数据库仍标记执行中时也会保守拒绝，应先核对执行现场。不会清空队列、自动改写原生历史或结束占用端口的其他程序。
 
 停服后备份 `relay.toml`、整个 `data_dir`（含口令、Relay 数据库、媒体索引和附件）、相关工作目录，以及 Codex 自己的 home/会话。它们含个人内容和凭据，必须存入私有备份，不上传源码仓库。
 
@@ -57,7 +69,9 @@
 - **输入口令后仍停在登录页或立即掉线**：按下方[登录排查](#登录排查)检查访问协议、Cookie 与服务响应。
 - **实时消息卡住**：检查 Nginx/CDN 的 SSE 缓冲和超时设置。
 - **较大附件上传 500，小文件正常**：检查 Nginx 错误日志是否有上传缓存目录 `Permission denied`。确认主配置的 worker 用户，将对应缓存目录属主恢复为该用户并保留原权限；独立模板测试须使用自己的缓存路径。
-- **前端未构建**：运行 `npm ci && npm run build`，检查 `dist_dir`。
+- **前端未构建或移动后首页 503**：在当前项目目录执行 `bash scripts/relay.sh repair`；HTML 故障页会显示该命令。使用 `status` 区分构建缺失与旧安装路径。
+- **端口占用**：使用 `status` 检查监听地址，调整自己的配置或自行处理占用程序；管理器不会结束外部进程或自动换端口。
+- **缺少 Python venv 或 Node**：按命令给出的安装提示补齐系统环境后重试。项目依赖会自动安装，系统包不自动安装。
 - **依赖安装失败**：确认 Python/Node 版本、网络与包索引。仓库未指定任何私有镜像。
 
 ### 登录排查

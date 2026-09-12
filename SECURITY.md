@@ -4,6 +4,7 @@ Codex Relay 是共用服务器账号的远程执行入口，访问口令持有�
 
 - 密钥、Codex home、访问口令、附件、会话历史与运行数据库不属于源码。`.gitignore` 排除常见路径，发布脚本使用白名单并检查常见密钥特征、非示例 IPv4 地址和个人主目录路径，包括 Python 字符串常量拼接；它不能识别所有自定义凭据、域名或个人信息，发布前仍应查看 Git diff。
 - `.gitignore` 和源码打包检查不会清理已有 Git 提交。曾提交过敏感内容时，还需检查并清理历史；源码 ZIP 不含 Git 历史。
+- 发布前运行 `python3 scripts/release.py --check --git-check --history`，检查索引、可达历史及提交/标签消息；使用 `--private-values-file privacy.local.txt` 额外检测自己的域名等标识。Git 作者姓名/邮箱仍会随提交公开，图片中的文字需人工审阅。详见[维护与发布](docs/releasing.md)。
 - 会话 Cookie 为 HttpOnly、SameSite=Strict；HTTPS 部署显式设置 `secure_cookie = true`。写请求要求固定同源请求头，未启用跨域 API。
 - 审批和提问必须由用户操作；不自动同意。未知原生交互会报不支持，而不会默认放行。
 - 附件接口需要登录，验证类型、大小和归属；文档作为附件下载。Markdown 禁用原始 HTML，KaTeX 不信任危险命令。

@@ -48,6 +48,10 @@
 !/deploy/**/
 !/deploy/**/*.example
 !/.github/
+!/.github/PULL_REQUEST_TEMPLATE.md
+!/.github/dependabot.yml
+!/.github/ISSUE_TEMPLATE/
+!/.github/ISSUE_TEMPLATE/*.yml
 !/.github/workflows/
 !/.github/workflows/**/
 !/.github/workflows/**/*.yml
@@ -117,3 +121,7 @@ Thumbs.db
 *.swp
 *.swo
 *~
+*.relay-backup-*/
+*.relay-failed-*/
+*.relay-backup-*
+*.relay-failed-*

@@ -1,0 +1,31 @@
+name: 问题反馈
+description: 报告可复现的安装、运行或界面问题
+body:
+  - type: markdown
+    attributes:
+      value: "请先阅读 README 和部署文档的常见问题。不要上传 relay.toml、access.txt、完整日志、真实会话或服务器地址。安全漏洞请使用私有报告渠道，见 SECURITY.md。"
+  - type: textarea
+    id: environment
+    attributes:
+      label: 版本与环境
+      description: 项目版本或提交、操作系统、Python / Node / Codex CLI 版本，以及 HTTP 或 HTTPS、前台或 systemd 运行方式。
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现步骤
+      description: 使用演示数据说明从哪一步开始出错。
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: 预期与实际结果
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: 已脱敏的错误片段
+      description: 可摘录 status 或日志中的相关错误；提交前移除域名、IP、个人路径、口令及会话内容。

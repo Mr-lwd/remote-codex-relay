@@ -6,6 +6,7 @@ import json
 import os
 import uuid
 from server.config import settings
+from server import __version__
 
 
 class CodexRPC:
@@ -42,7 +43,7 @@ class CodexRPC:
         await self.call(
             "initialize",
             {
-                "clientInfo": {"name": "codex_relay", "version": "2.0.0"},
+                "clientInfo": {"name": "codex_relay", "version": __version__},
                 "capabilities": {"experimentalApi": True},
             },
         )

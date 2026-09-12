@@ -42,14 +42,20 @@ class Settings:
         }
 
 
-def load_settings(environ=None, root=ROOT):
+def load_settings(environ=None, root=ROOT, *, config=None, config_path=None):
     env = os.environ if environ is None else environ
-    config_path = Path(env.get("RELAY_CONFIG_FILE", str(root / "relay.toml"))).expanduser()
+    config_path = Path(
+        config_path or env.get("RELAY_CONFIG_FILE", str(root / "relay.toml"))
+    ).expanduser()
     if not config_path.is_absolute():
         config_path = root / config_path
-    if "RELAY_CONFIG_FILE" in env and not config_path.is_file():
+    if config is None and "RELAY_CONFIG_FILE" in env and not config_path.is_file():
         raise ValueError("RELAY_CONFIG_FILE does not name an existing file")
-    raw = tomllib.loads(config_path.read_text()) if config_path.exists() else {}
+    raw = (
+        config
+        if config is not None
+        else (tomllib.loads(config_path.read_text()) if config_path.exists() else {})
+    )
     allowed = {
         "server": {"host", "port", "secure_cookie"},
         "paths": {"data_dir", "dist_dir", "workspace_root", "default_cwd"},
@@ -142,4 +148,11 @@ def load_settings(environ=None, root=ROOT):
     )
 
 
-settings = load_settings()
+def __getattr__(name):
+    # Management tools must be able to inspect/repair invalid or moved configuration
+    # before loading runtime settings. Runtime imports still share one settings object.
+    if name == "settings":
+        result = load_settings()
+        globals()[name] = result
+        return result
+    raise AttributeError(name)

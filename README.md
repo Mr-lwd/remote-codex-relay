@@ -34,23 +34,26 @@ Codex Relay 是一个自托管网页工作台，通过本机 Codex CLI 管理会
 
 ## 快速开始
 
-推荐 **Linux / WSL2**。准备 Python **3.11+**、Node.js **22 / 24**、npm，以及已登录或配置好模型服务的 Codex CLI。当前已验证的 CLI 版本为 **0.154.0**。
+推荐 **Linux / WSL2**。准备 Python **3.11+**（含 venv）、Node.js **22 / 24**、npm，以及已登录或配置好模型服务的 Codex CLI。当前已验证的 CLI 版本为 **0.154.0**。首次安装需能访问 PyPI 和 npm 包源。
 
-在项目根目录安装依赖并构建前端：
+从本仓库的 **Code → Download ZIP** 下载并解压，或使用 Code 中的地址 `git clone`；进入解压或克隆后的项目根目录（应能看到 `scripts/` 和 `relay.example.toml`），执行：
 
 ```bash
-bash scripts/setup.sh
+bash scripts/relay.sh start
 ```
 
-脚本会创建虚拟环境并生成 `relay.toml`，保留已有配置。启动前核对工作目录和模型 ID：默认提供 `gpt-5.6-sol`、`gpt-6-astra`，可按你的模型服务修改。完整选项见[配置参考](docs/configuration.md)。
+管理器会检查 Python、Node 和 Codex，按锁文件补齐项目依赖、构建前端，并生成用户 systemd 服务；没有可用的用户 systemd 时以前台方式运行。已有配置和数据会保留，缺失的 `relay.toml` 会从模板生成。系统依赖不满足时会显示安装提示，不自动执行 sudo。
+
+默认提供 `gpt-5.6-sol`、`gpt-6-astra`，需由你配置的模型服务支持；不支持时修改 `[ui]` 的 `models` 和 `default_model`。启动前也可以先复制 `relay.example.toml` 为 `relay.toml`，设置工作目录、模型和监听地址；已有文件直接编辑，完整选项见[配置参考](docs/configuration.md)。
 
 **API 快速切换推荐：** [CC Switch CLI](https://github.com/SaladDay/cc-switch-cli) 支持在终端集中管理和切换 Codex、Claude Code 等工具的 API 服务商配置，适合需要在多个 API 接口之间快速切换的用户。
 
-检查环境并启动服务：
+查看运行状态，或选择前台运行：
 
 ```bash
-.venv/bin/python scripts/doctor.py
-.venv/bin/python -m server
+bash scripts/relay.sh status
+# 没有后台服务运行时：
+bash scripts/relay.sh start --foreground
 ```
 
 打开 **http://127.0.0.1:8000**，在另一个终端读取首次启动生成的登录口令：
@@ -60,6 +63,23 @@ cat runtime/access.txt
 ```
 
 登录后选择已有会话，或点击「新建任务」浏览工作目录并开始。自定义数据目录时，从该目录的 `access.txt` 读取口令。远程访问与常驻运行见[部署指南](docs/deployment.md)。
+
+### 日常管理与目录迁移
+
+| 命令 | 用途 |
+| --- | --- |
+| `bash scripts/relay.sh start` | 检查并启动；配置和依赖未变化时重复执行不会重启 |
+| `bash scripts/relay.sh repair` | 自动修复旧路径、虚拟环境或前端构建，并恢复运行 |
+| `bash scripts/relay.sh stop` | 停止当前项目的服务 |
+| `bash scripts/relay.sh restart` | 检查后重启服务 |
+| `bash scripts/relay.sh status` | 查看进程、路径、依赖、前端和访问地址 |
+| `bash scripts/relay.sh logs` | 查看安装日志并持续跟踪服务日志，Ctrl+C 退出查看 |
+
+项目改名或移动后，在**新目录**执行 `bash scripts/relay.sh repair`。支持中文和空格路径；也可从其他目录通过脚本的完整路径调用。移动前先等待任务结束、处理队列并执行 `stop`，整体带走 `relay.toml`、`runtime/` 和自定义的运行数据。管理器发现执行任务或待处理队列时会停止维护操作，不强制中断任务。
+
+修复会备份被替换的配置和生成文件，重新创建失效的虚拟环境；安装或构建失败会恢复旧文件。旧路径信息冲突、原目录仍存在或同名服务属于其他项目时会明确报错。Codex 原生会话内的工作目录和外部文件路径不自动改写，边界与备份位置见[迁移说明](docs/deployment.md#备份和迁移)。
+
+开机自启需显式运行 `bash scripts/relay.sh start --enable`。只安装而不启动仍可使用 `bash scripts/setup.sh`；开发依赖使用 `bash scripts/setup.sh --dev`。
 
 ### 通过公网 IP 或域名访问
 
@@ -72,7 +92,7 @@ port = 8000
 secure_cookie = false # 直接通过 HTTP 访问时使用 false。
 ```
 
-等待正在执行的任务结束后重启服务。手动运行时停止旧进程并重新执行 `.venv/bin/python -m server`；使用 systemd 时执行 `systemctl --user restart codex-relay`。临时测试也可以通过启动参数指定监听地址：
+修改后执行 `bash scripts/relay.sh restart`，管理器会先检查执行任务与队列。已安装依赖时，也可手动启动一次临时测试：
 
 ```bash
 .venv/bin/python -m server --host 0.0.0.0 --port 8000
@@ -126,6 +146,9 @@ HTTP 直连可用于连通性测试；长期公网访问请配置 [HTTPS 反向�
 | 理解项目结构与 Codex 接入方式 | [架构说明](docs/architecture.md) |
 | 本地开发、运行测试与维护项目 | [开发文档](docs/development.md) · [贡献指南](CONTRIBUTING.md) |
 | 了解使用边界与版本变化 | [安全说明](SECURITY.md) · [变更记录](CHANGELOG.md) |
+| 审查隐私、准备源码包与发布版本 | [维护与发布](docs/releasing.md) |
+
+当前源码版本为 **1.1.0**。安装与浏览器自动验收使用独立演示数据，不包含维护者的账号、服务器配置、会话和附件。Codex CLI 使用实验协议，升级 CLI 或更换服务商后应执行[接入检查](docs/development.md#原生-codex-接入检查)。本项目由社区维护，与 OpenAI 无官方隶属关系。
 
 ## License
 

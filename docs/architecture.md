@@ -6,6 +6,8 @@
 | --- | --- |
 | `server/config.py` | 统一 TOML / 环境配置，路径与模型校验；导入不读取凭据、不创建运行文件 |
 | `server/__main__.py` | 校验 CLI / 前端后启动单 worker Uvicorn |
+| `scripts/relay.sh` / `relay_manager.py` | 标准库管理入口：路径识别、依赖准备、用户服务、诊断与失败恢复 |
+| `server/maintenance.py` | 管理器和 HTTP 写请求共享的维护锁、只读任务状态检查 |
 | `server/app.py` | API、认证、会话适配、队列与目标生命周期、SSE |
 | `server/storage.py` | Relay SQLite schema 的幂等升级、连接、口令创建 |
 | `server/codex_rpc.py` | 双向 JSON-RPC、请求关联、通知队列、显式审批 |

@@ -4,6 +4,8 @@
 
 从干净 checkout 开始运行 `bash scripts/setup.sh --dev`。启动 `.venv/bin/python -m server`，另一终端运行 `npm run dev`。开发代理默认连接后端 8000 端口，前端构建由 FastAPI 同源托管。不要对管理活跃任务的服务启用热重载。
 
+`setup.sh` 现在复用标准库管理器的安装流程，只准备环境；已有服务运行时请使用 `repair`，或先停止服务。管理器重建虚拟环境时保留已检测到的运行/开发/浏览器依赖类型。
+
 使用独立 `relay.toml`，把 `data_dir`、`workspace_root`、`default_cwd` 和 `codex.home` 指向自己的测试环境。单元测试和浏览器 smoke 自行创建临时数据，不依赖本机已有账号、会话、附件或调试浏览器。
 
 ## 自动化检查
@@ -38,6 +40,18 @@ npm run build
 
 这套测试使用合成历史，不执行模型；它不能证明你的账号支持目标协议或所选模型，也不替代手机真机验证。
 
+## 安装与目录迁移验收
+
+`tests/test_manager.py` 使用假安装器和临时目录验证下载/构建失败恢复、旧路径冲突、同名服务保护、配置重写、端口占用、并发管理和任务保护；不会调用真实用户服务。`tests/test_maintenance.py` 验证维护期间的写请求拦截和中文 503 页面。
+
+需要验证真实依赖安装与迁移时运行：
+
+```bash
+.venv/bin/python tests/manager_smoke.py
+```
+
+该验收需要可用的包网络或缓存、系统 venv 和 Node 22/24。它复制源码到临时中文/空格目录，安装依赖并以前台模式启动，在其他工作目录重复调用命令，再移动项目、删除构建入口并执行修复，验证原口令、合成会话和已上传附件。使用独立配置和进程，不接管真实 systemd 服务或读取 Codex 账号。报告与日志保存在 `runtime/manager-smoke/`。
+
 ## 原生 Codex 接入检查
 
 ```bash
@@ -63,7 +77,7 @@ npm run build
 ## 源码发布
 
 ```bash
-python3 scripts/release.py --check
+python3 scripts/release.py --check --git-check --history
 python3 scripts/release.py
 ```
 
@@ -71,4 +85,6 @@ python3 scripts/release.py
 
 `.gitignore` 默认忽略未列入发布范围的文件，仅放行源码、必要脚本、配置模板、文档和 CI 测试。新增目录或资源类型时同步更新 `.gitignore` 与发布脚本；本地探针、截图、日志和验收报告放在 `runtime/` 或 `output/`。
 
-发布前应在另一个目录解压该包，按 README 执行安装、诊断和启动，确认没有使用原项目 `.venv`、`node_modules`、`dist` 或运行数据。此项目不包含自动推送、自动创建远程仓库或自动上线脚本。
+发布前应在另一个目录解压该包，按 README 执行安装、诊断和启动，确认没有使用原项目 `.venv`、`node_modules`、`dist` 或运行数据。此项目不包含自动推送或创建远程仓库的脚本。
+
+可用 `python3 tests/manager_smoke.py --archive output/releases/codex-relay-版本.zip` 直接验收生成的源码包。版本一致性、Git 历史/自定义隐私检查和 GitHub 设置见[维护与发布](releasing.md)。

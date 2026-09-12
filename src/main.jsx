@@ -1162,7 +1162,7 @@ function App() {
           <div className="workspace-name">
             <div className="workspace-avatar">U</div>
             <div>
-              Ubuntu 工作空间<small>个人远程工作台</small>
+              我的工作空间<small>个人远程工作台</small>
             </div>
             <span className="live-dot" />
           </div>

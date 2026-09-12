@@ -23,6 +23,8 @@
 
 启动器 `.venv/bin/python -m server --host ... --port ...` 的命令行参数优先于对应监听配置。直接使用 `uvicorn server.app:app` 时，监听地址和端口由 Uvicorn 参数决定，`RELAY_HOST/PORT` 不控制 Uvicorn 命令行。
 
+推荐通过 `bash scripts/relay.sh start` 启动。管理器在读取运行配置前识别迁移路径，更新自己的服务配置；修改 TOML 后运行 `bash scripts/relay.sh restart`。`status` 使用系统 Python，即使 `.venv` 失效也能给出诊断。管理器不接受静默切换端口，统一使用 TOML 或对应环境变量。
+
 `server.host = "0.0.0.0"` 监听所有 IPv4 网卡，用于局域网或公网直连。客户端使用服务器实际 IP 或解析到它的域名访问；`0.0.0.0` 不是访问地址。修改后重启后端，并检查云平台安全组、主机防火墙是否放行配置端口。环境变量与启动参数可能覆盖 TOML 中的值，排查时应同时核对服务的启动配置。
 
 HTTP 直连必须使用 `secure_cookie = false`；HTTPS 反向代理后使用 `true`，后端通常保持 `127.0.0.1`。域名解析不会自动提供 HTTPS，完整配置见[部署指南](deployment.md#nginx-和-https)。
