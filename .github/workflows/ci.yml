@@ -39,7 +39,7 @@ jobs:
           python -m playwright install --with-deps chromium
           python tests/browser_smoke.py
           python tests/manager_smoke.py
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always() && matrix.python == '3.12'
         with:
           name: browser-smoke
@@ -68,7 +68,7 @@ jobs:
               raise SystemExit('Tag does not match package.json version')
           PY
       - run: python scripts/release.py --git-check --history
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: codex-relay-source
           path: |
