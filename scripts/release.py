@@ -21,6 +21,7 @@ FILES = (
     ".prettierignore",
     ".prettierrc.json",
     "README.md",
+    "README.en.md",
     "LICENSE",
     "SECURITY.md",
     "CONTRIBUTING.md",

@@ -1,3 +1,5 @@
+**[简体中文](README.md)** | [English](README.en.md)
+
 # Codex Relay — 跨设备的 Codex 网页工作台
 
 <p align="center">
