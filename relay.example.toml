@@ -1,0 +1,25 @@
+# Copy to relay.toml. Never put API keys in this file.
+# Paths are relative to this file; ~ expands to the current user's home.
+# Environment overrides: docs/configuration.md.
+[server]
+host = "127.0.0.1"
+port = 8000
+secure_cookie = false # Set true behind an HTTPS reverse proxy.
+
+[paths]
+data_dir = "runtime"
+dist_dir = "dist"
+# workspace_root = "~/projects" # Must already exist.
+# default_cwd = "~/projects"   # Must be inside workspace_root.
+
+[codex]
+binary = "codex" # Or an absolute executable path.
+# home = "~/.codex"
+
+[ui]
+default_model = "gpt-5.6-sol"
+default_effort = "medium"
+models = [
+  { id = "gpt-5.6-sol", name = "GPT-5.6-Sol" },
+  { id = "gpt-6-astra", name = "GPT-6-Astra" },
+]

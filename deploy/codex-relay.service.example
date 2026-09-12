@@ -1,0 +1,20 @@
+[Unit]
+Description=Codex Relay web console
+After=network-online.target
+
+[Service]
+Type=simple
+# Replace both /ABSOLUTE/PATH entries with your checkout path.
+WorkingDirectory=/ABSOLUTE/PATH/codex-relay
+ExecStart=/ABSOLUTE/PATH/codex-relay/.venv/bin/python -m server
+# Extend PATH if Node/Codex is installed through nvm or another user toolchain.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=15
+UMask=0077
+# Stop native child processes with the service. Pause goals before maintenance.
+KillMode=control-group
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="354" height="24" viewBox="0 0 354 24" role="img" aria-labelledby="title">
+  <title id="title">MIT License · Python 3.11+ · Node.js 22 / 24</title>
+  <g font-family="Arial, Helvetica, sans-serif" font-size="11" text-anchor="middle" fill="#fff">
+    <rect width="52" height="24" fill="#4f5e55"/>
+    <rect x="52" width="40" height="24" fill="#28764f"/>
+    <text x="26" y="16">license</text>
+    <text x="72" y="16">MIT</text>
+    <rect x="106" width="54" height="24" fill="#4f5e55"/>
+    <rect x="160" width="60" height="24" fill="#28764f"/>
+    <text x="133" y="16">Python</text>
+    <text x="190" y="16">3.11+</text>
+    <rect x="234" width="56" height="24" fill="#4f5e55"/>
+    <rect x="290" width="64" height="24" fill="#28764f"/>
+    <text x="262" y="16">Node.js</text>
+    <text x="322" y="16">22 / 24</text>
+  </g>
+</svg>

@@ -1,0 +1,10 @@
+# Direct runtime dependencies. Exact tested resolution: requirements.txt
+fastapi
+uvicorn
+httpx
+Pillow
+pypdf
+python-docx
+python-pptx
+openpyxl
+reportlab
