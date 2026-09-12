@@ -56,7 +56,7 @@ bash scripts/relay.sh status
 bash scripts/relay.sh start --foreground
 ```
 
-打开 **http://127.0.0.1:8000**，在另一个终端读取首次启动生成的登录口令：
+打开 **http://127.0.0.1:8000** ，在另一个终端读取首次启动生成的登录口令：
 
 ```bash
 cat runtime/access.txt

@@ -55,8 +55,12 @@ p {
   width: 44px;
   height: 44px;
   border-radius: 12px;
-  background: #28734e;
-  color: white;
+  flex-shrink: 0;
+}
+.mark img {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 .mark.small {
   width: 32px;

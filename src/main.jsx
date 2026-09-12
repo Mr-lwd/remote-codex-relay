@@ -5,6 +5,7 @@ import {
   validPreference as validModelPreference,
 } from './ModelPicker';
 import { savedPreference } from './preferences';
+import relayIcon from './assets/relay-icon.svg';
 import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, memo } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
@@ -185,7 +186,7 @@ async function api(path, body) {
 function Mark({ small = false }) {
   return (
     <div className={'mark ' + (small ? 'small' : '')}>
-      <TerminalWindow weight="bold" size={small ? 21 : 26} />
+      <img src={relayIcon} alt="" width={small ? 32 : 44} height={small ? 32 : 44} />
     </div>
   );
 }
