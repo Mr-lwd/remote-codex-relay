@@ -19,7 +19,7 @@ import uuid
 
 import httpx
 from PIL import Image
-from browser_slash_paths import check_slash_composer
+from browser_slash_paths import check_slash_composer, check_slash_upload_readiness
 from browser_queue import check_queue_composer
 from browser_goal_clear import check_goal_clear
 from browser_sessions import check_sessions
@@ -250,6 +250,32 @@ def main():
                                     results.append(
                                         f"browser {width}x{height}: login, math/table, model effort, attachment tray, no overflow/errors"
                                     )
+                                except Exception:
+                                    page.screenshot(
+                                        path=str(args.output / f"failure-{width}x{height}.png")
+                                    )
+                                    (args.output / f"failure-{width}x{height}.json").write_text(
+                                        json.dumps(
+                                            {
+                                                "viewport": [width, height],
+                                                "pageErrors": errors,
+                                                "composer": page.locator(
+                                                    ".composer textarea"
+                                                ).input_value()
+                                                if page.locator(".composer textarea").count()
+                                                else None,
+                                                "attachments": page.locator(
+                                                    ".attachment-state"
+                                                ).all_text_contents(),
+                                                "alerts": page.get_by_role(
+                                                    "alert"
+                                                ).all_text_contents(),
+                                            },
+                                            ensure_ascii=False,
+                                            indent=2,
+                                        )
+                                    )
+                                    raise
                                 finally:
                                     context.close()
                             context = browser.new_context(viewport={"width": 1440, "height": 900})
@@ -302,6 +328,19 @@ def main():
                                 )
                             finally:
                                 context.close()
+                            for width, height in [(1440, 900), (390, 844)]:
+                                context = browser.new_context(
+                                    viewport={"width": width, "height": height}
+                                )
+                                try:
+                                    page = context.new_page()
+                                    page.goto(base)
+                                    check_slash_upload_readiness(page)
+                                    results.append(
+                                        f"delayed upload {width}x{height}: slash path waits for send readiness and preserves the attachment"
+                                    )
+                                finally:
+                                    context.close()
                             for width, height in [(1440, 900), (390, 844)]:
                                 context = browser.new_context(
                                     viewport={"width": width, "height": height}

@@ -4,6 +4,7 @@ import argparse
 import io
 import json
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from PIL import Image
 from playwright.sync_api import expect, sync_playwright
@@ -20,12 +21,21 @@ def check_slash_composer(page):
     page.route(pattern, capture)
     field = page.get_by_label("向 Codex 发送消息", exact=True)
     readiness = page.get_by_role("button", name="本条指令模型", exact=True)
+    send_button = page.get_by_role("button", name="发送消息", exact=True)
+    attachment_count = page.locator(".composer-attachments .attachment-draft").count()
 
     def wait_for_send():
         expect(field).to_have_value("")
         # The draft clears before the subsequent thread refresh finishes. Wait for
         # the send lock to release before typing another message.
         expect(readiness).to_be_enabled(timeout=20000)
+
+    def send_current():
+        # The model picker can be enabled while attachments are still uploading.
+        # Enter intentionally does nothing until the actual send conditions hold.
+        expect(send_button).to_be_enabled(timeout=20000)
+        field.press("Enter")
+        wait_for_send()
 
     try:
         expect(readiness).to_be_enabled(timeout=20000)
@@ -47,8 +57,7 @@ def check_slash_composer(page):
             expect(field).to_have_value(text)
             expect(field).to_be_focused()
             expect(page.locator(".command-token")).to_have_count(0)
-            field.press("Enter")
-            wait_for_send()
+            send_current()
             assert submitted[-1]["text"] == text, {
                 "expected": text,
                 "actual": submitted[-1]["text"],
@@ -69,23 +78,107 @@ def check_slash_composer(page):
         field.fill("/goal ")
         expect(page.locator(".command-token")).to_have_count(1)
         field.fill("检查路径支持")
-        field.press("Enter")
-        wait_for_send()
+        send_current()
         assert submitted[-1]["text"] == "/goal 检查路径支持"
         field.fill("/compact")
         field.press("Enter")
         expect(page.locator(".command-token")).to_have_count(1)
-        field.press("Enter")
-        wait_for_send()
+        send_current()
         assert submitted[-1]["text"] == "/compact"
+        assert len(submitted[0].get("attachments", [])) == attachment_count
         return {
             "plainPaths": len(paths),
             "atomicCommands": True,
             "pathPreservedByMenu": True,
             "capturedRequests": len(submitted),
+            "firstAttachments": submitted[0].get("attachments", []),
         }
     finally:
         page.unroute(pattern, capture)
+
+
+def check_slash_upload_readiness(page):
+    """Keep an upload pending after the model picker is already usable."""
+    held = []
+    state = {"released": False}
+    ident = "a" * 32
+    raw = io.BytesIO()
+    Image.new("RGB", (40, 30), "green").save(raw, "PNG")
+
+    def detail():
+        return {
+            "id": "upload-readiness",
+            "title": "附件就绪验收",
+            "cwd": "/tmp/upload-readiness",
+            "status": "idle",
+            "model": "gpt-6-astra",
+            "reasoningEffort": "high",
+            "modelSwitchAllowed": True,
+            "tokens": 0,
+            "goal": None,
+            "messages": [],
+            "notes": [],
+            "activities": [],
+            "requests": [],
+            "commandRecords": [],
+            "pendingMessages": [],
+            "pendingCount": 0,
+            "history": {"mode": "recent", "hasMore": False, "total": 0},
+        }
+
+    def route_api(route):
+        path = urlsplit(route.request.url).path
+        if path == "/api/threads":
+            route.fulfill(json={"threads": [detail()], "defaultCwd": "/tmp"})
+        elif path.startswith("/api/threads/"):
+            route.fulfill(json=detail())
+        elif path == "/api/media":
+            held.append(route)
+        elif path == "/api/fixture/release-upload":
+            held.pop().fulfill(
+                json={
+                    "id": ident,
+                    "name": "delayed.png",
+                    "kind": "image",
+                    "mime": "image/png",
+                    "width": 40,
+                    "height": 30,
+                    "size": len(raw.getvalue()),
+                    "url": "/api/media/" + ident,
+                }
+            )
+            state["released"] = True
+            route.fulfill(json={"ok": True})
+        elif path.startswith("/api/media/"):
+            route.fulfill(content_type="image/png", body=raw.getvalue())
+        else:
+            route.fulfill(status=404, json={"detail": "Unexpected fixture request"})
+
+    page.route("**/api/**", route_api)
+    page.add_init_script("""localStorage.setItem('relay-thread', 'upload-readiness');
+      window.EventSource = class {
+        constructor() {} addEventListener() {} close() {}
+      };
+    """)
+    try:
+        page.reload()
+        model = page.get_by_role("button", name="本条指令模型", exact=True)
+        expect(model).to_be_enabled()
+        page.locator(".composer input[type=file]").set_input_files(
+            {"name": "delayed.png", "mimeType": "image/png", "buffer": raw.getvalue()}
+        )
+        expect(page.locator(".composer-attachments")).to_contain_text("上传中")
+        expect(model).to_be_enabled()
+        expect(page.get_by_role("button", name="发送消息", exact=True)).to_be_disabled()
+        # Release from a browser timer so the sync test can keep typing/asserting.
+        # The delay models upload latency; the sender must wait on UI state.
+        page.evaluate("setTimeout(() => fetch('/api/fixture/release-upload'), 1800)")
+        result = check_slash_composer(page)
+        assert state["released"]
+        assert result["firstAttachments"] == [ident]
+        return {**result, "delayedUploadPreserved": True}
+    finally:
+        page.unroute("**/api/**", route_api)
 
 
 def main():
