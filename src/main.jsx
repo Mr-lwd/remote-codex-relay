@@ -428,7 +428,18 @@ function Login({ onLogin }) {
     setError('');
     try {
       await api('/login', { password });
-      onLogin();
+      let snapshot;
+      try {
+        snapshot = await api('/threads');
+      } catch (e) {
+        if (e.auth) {
+          throw new Error(
+            '口令已验证，但浏览器未能保存或发送登录 Cookie。请允许此站点使用 Cookie，再重新登录。',
+          );
+        }
+        throw e;
+      }
+      await onLogin(snapshot);
     } catch (e) {
       setError(e.auth ? '访问口令不正确' : e.message);
     } finally {
@@ -669,9 +680,9 @@ function App() {
     setNewModel(value);
     localStorage.setItem('relay-new-model', JSON.stringify(value));
   }
-  async function initialize() {
+  async function initialize(snapshot) {
     try {
-      const d = await api('/threads');
+      const d = snapshot || (await api('/threads'));
       setThreads(d.threads);
       setCwd(d.defaultCwd);
       const config = d.clientConfig || DEFAULT_CONFIG;

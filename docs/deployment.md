@@ -50,11 +50,20 @@
 
 ## 常见问题
 
+- **本机能打开，其他设备打不开**：HTTP 直连时设置 `host = "0.0.0.0"` 并重启；浏览器使用实际 IP 或域名及端口。检查 A/AAAA 解析、云平台安全组和主机防火墙，确认 TCP 端口已放行。HTTPS 反代部署则检查代理的 80/443 端口。
 - **找不到 Codex**：先 `command -v codex`，设置 `CODEX_BIN` 或 `codex.binary`；systemd 还须能找到 Node。
 - **503 / 无法读取会话数据库**：执行 `scripts/doctor.py`。已有 `state_5.sqlite` 的 schema 不匹配时核对 CLI 版本，不要删除个人数据库试错。
 - **网页能打开但模型失败**：检查本机 Codex 登录、服务商、可用模型/强度及额度。UI 模型 ID 是可配置的。
-- **登录后立即掉线**：通过 HTTPS 使用 Secure Cookie；HTTP 本地测试应设 `secure_cookie = false`。
+- **输入口令后仍停在登录页或立即掉线**：按下方[登录排查](#登录排查)检查访问协议、Cookie 与服务响应。
 - **实时消息卡住**：检查 Nginx/CDN 的 SSE 缓冲和超时设置。
 - **较大附件上传 500，小文件正常**：检查 Nginx 错误日志是否有上传缓存目录 `Permission denied`。确认主配置的 worker 用户，将对应缓存目录属主恢复为该用户并保留原权限；独立模板测试须使用自己的缓存路径。
 - **前端未构建**：运行 `npm ci && npm run build`，检查 `dist_dir`。
 - **依赖安装失败**：确认 Python/Node 版本、网络与包索引。仓库未指定任何私有镜像。
+
+### 登录排查
+
+1. 确认使用当前 `data_dir/access.txt` 中的口令。`POST /api/login` 返回 401 表示口令不匹配，429 表示失败次数过多，应等待一分钟再试。
+2. 若登录返回 200，随后 `GET /api/threads` 返回 401，说明口令已通过，但请求没有携带有效的登录 Cookie。查看浏览器开发者工具的 Network / Cookies 面板中 `Set-Cookie` 的拦截原因；不要公开口令或 Cookie 值。
+3. 通过 `http://IP:端口/` 或 `http://域名:端口/` 直连时设置 `secure_cookie = false`，并检查是否有 `RELAY_SECURE_COOKIE` 环境变量覆盖。`true` 仅配合 HTTPS 访问；改配置后重启服务。
+4. 本版使用实例独立的 Cookie 名称；浏览器 Cookie 不按端口隔离，旧版同名 Secure Cookie 可能阻止 HTTP 页面覆盖，浏览器会报告 `OverwriteSecure`。升级后强制刷新前端并重新登录；仍有冲突时清除对应站点的 Cookie。
+5. 如果浏览器禁用了站点 Cookie，允许该站点存储 Cookie，并直接在浏览器标签页打开工作台。页面会明确提示“口令已验证，但浏览器未能保存或发送登录 Cookie”。IP 与域名保存各自的登录状态，切换访问地址后需分别登录。

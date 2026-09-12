@@ -25,6 +25,7 @@ from browser_goal_clear import check_goal_clear
 from browser_sessions import check_sessions
 from browser_typing import check_typing
 from browser_message_rendering import check_message_rendering
+from browser_login import check_login_cookies
 from playwright.sync_api import sync_playwright, expect
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -182,6 +183,10 @@ def main():
                             else playwright.chromium.launch()
                         )
                         try:
+                            check_login_cookies(browser, base, password)
+                            results.append(
+                                "login: stale secure cookie, reload, logout, blocked cookie feedback"
+                            )
                             for width, height in [
                                 (1440, 900),
                                 (768, 1024),

@@ -88,7 +88,7 @@ def test_existing_incompatible_database_remains_an_error(tmp_path, monkeypatch):
     with sqlite3.connect(tmp_path / "state_5.sqlite") as db:
         db.execute("CREATE TABLE threads(wrong TEXT)")
     client = TestClient(adapter.app)
-    client.cookies.set("relay_session", adapter.SESSION)
+    client.cookies.set(adapter.SESSION_COOKIE, adapter.SESSION)
     assert client.get("/api/threads").status_code == 503
 
 

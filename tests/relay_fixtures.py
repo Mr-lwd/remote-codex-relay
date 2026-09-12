@@ -92,6 +92,6 @@ def store(tmp_path, monkeypatch):
 @pytest.fixture
 def client(store):
     client = TestClient(adapter.app)
-    client.cookies.set("relay_session", adapter.SESSION)
+    client.cookies.set(adapter.SESSION_COOKIE, adapter.SESSION)
     client.headers["X-Relay-Request"] = "1"
     return client

@@ -129,7 +129,7 @@ def test_recent_history_is_ten_combined_records_and_all_has_no_old_caps(relay, m
                 (f"c{i}", "t", "help", "/help", "completed", "help", None, 700 + i),
             )
     client = TestClient(adapter.app)
-    client.cookies.set("relay_session", adapter.SESSION)
+    client.cookies.set(adapter.SESSION_COOKIE, adapter.SESSION)
     recent = client.get("/api/threads/t").json()
     assert recent["history"] == {"mode": "recent", "total": 660, "hasMore": True}
     assert len(recent["messages"]) + len(recent["notes"]) + len(recent["commandRecords"]) == 10

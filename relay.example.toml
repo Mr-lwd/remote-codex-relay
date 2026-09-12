@@ -2,7 +2,7 @@
 # Paths are relative to this file; ~ expands to the current user's home.
 # Environment overrides: docs/configuration.md.
 [server]
-host = "127.0.0.1"
+host = "127.0.0.1" # Use "0.0.0.0" for direct access from other devices; see README.
 port = 8000
 secure_cookie = false # Set true behind an HTTPS reverse proxy.
 

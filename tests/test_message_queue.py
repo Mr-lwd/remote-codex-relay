@@ -130,7 +130,7 @@ def test_cancel_api_auth_scope_idempotency_and_persistence(relay):
     path = f"/api/threads/t/queue/{ident}/cancel"
     client = TestClient(adapter.app)
     assert client.post(path, json={}).status_code == 401
-    client.cookies.set("relay_session", adapter.SESSION)
+    client.cookies.set(adapter.SESSION_COOKIE, adapter.SESSION)
     assert client.post(path, json={}).status_code == 403
     client.headers["X-Relay-Request"] = "1"
     assert client.get("/api/threads/t").json()["pendingMessages"][0]["id"] == ident

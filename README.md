@@ -61,6 +61,29 @@ cat runtime/access.txt
 
 登录后选择已有会话，或点击「新建任务」浏览工作目录并开始。自定义数据目录时，从该目录的 `access.txt` 读取口令。远程访问与常驻运行见[部署指南](docs/deployment.md)。
 
+### 通过公网 IP 或域名访问
+
+默认的 `127.0.0.1` 只允许服务器本机访问。需要从其他设备直接连接时，修改本地 `relay.toml` 中已有的 `[server]` 配置（不要重复添加该节）：
+
+```toml
+[server]
+host = "0.0.0.0"
+port = 8000
+secure_cookie = false # 直接通过 HTTP 访问时使用 false。
+```
+
+等待正在执行的任务结束后重启服务。手动运行时停止旧进程并重新执行 `.venv/bin/python -m server`；使用 systemd 时执行 `systemctl --user restart codex-relay`。临时测试也可以通过启动参数指定监听地址：
+
+```bash
+.venv/bin/python -m server --host 0.0.0.0 --port 8000
+```
+
+`0.0.0.0` 表示监听所有 IPv4 网卡，浏览器应打开 `http://服务器公网IP:8000/` 或 `http://你的域名:8000/`。域名的 A 记录须指向服务器公网 IP；云平台安全组和主机防火墙须允许 TCP 8000 入站。云主机通常通过内网网卡接收公网转发，无需把公网 IP 填入 `host`。
+
+HTTP 直连可用于连通性测试；长期公网访问请配置 [HTTPS 反向代理](docs/deployment.md#nginx-和-https)，将后端改回 `host = "127.0.0.1"` 并设置 `secure_cookie = true`。HTTPS 代理配置与 HTTP 直连配置不能混用，否则浏览器可能无法保存登录状态。
+
+如果输入口令后仍停在登录页，先核对 `secure_cookie` 与访问协议，再检查页面的 Cookie 提示，详见[登录排查](docs/deployment.md#登录排查)。登录口令是 `runtime/access.txt` 的内容，不是模型服务的 API Token。`relay.toml` 是被 Git 忽略的本地配置，提交部署说明时修改 README 和 `relay.example.toml` 即可。
+
 ## 核心能力
 
 - **多端会话** — 电脑、平板和手机共用工作台；支持真实目录浏览、会话创建、重命名与归档。

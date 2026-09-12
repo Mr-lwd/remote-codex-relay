@@ -22,7 +22,7 @@ def test_upload_requires_login_and_origin_and_download_preserves_original(client
     unauth = TestClient(adapter.app)
     assert unauth.post("/api/media", content=raw).status_code == 401
     no_origin = TestClient(adapter.app)
-    no_origin.cookies.set("relay_session", adapter.SESSION)
+    no_origin.cookies.set(adapter.SESSION_COOKIE, adapter.SESSION)
     assert no_origin.post("/api/media", content=raw).status_code == 403
     response = client.post("/api/media?name=photo.png&thread=t", content=raw)
     assert response.status_code == 200, response.text

@@ -37,6 +37,8 @@ CODEX_HOME = settings.codex_home
 CODEX = settings.codex_bin
 PASSWORD = access_password(DATA)
 SESSION = hmac.new(PASSWORD.encode(), b"codex-relay-session-v1", hashlib.sha256).hexdigest()
+# Each instance owns a distinct data directory; cookies are shared across ports.
+SESSION_COOKIE = f"codex_relay_{hashlib.sha256(str(DATA).encode()).hexdigest()[:12]}"
 
 
 def db():
@@ -538,7 +540,9 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 async def protect(request, call_next):
     path = request.url.path
     if path.startswith("/api/") and path not in ("/api/login", "/api/health"):
-        if not hmac.compare_digest(request.cookies.get("relay_session", ""), SESSION):
+        if not hmac.compare_digest(
+            request.cookies.get(SESSION_COOKIE, "").encode(), SESSION.encode()
+        ):
             return Response("Unauthorized", status_code=401)
         if request.method not in ("GET", "HEAD") and request.headers.get("x-relay-request") != "1":
             return Response("Invalid request origin", status_code=403)
@@ -562,12 +566,12 @@ async def login(body: Login, request: Request, response: Response):
     attempts[ip] = [t for t in attempts[ip] if now - t < 60]
     if len(attempts[ip]) >= 10:
         raise HTTPException(429, "尝试过于频繁，请稍后再试")
-    if not hmac.compare_digest(body.password, PASSWORD):
+    if not hmac.compare_digest(body.password.encode(), PASSWORD.encode()):
         attempts[ip].append(now)
         raise HTTPException(401, "访问口令不正确")
     attempts.pop(ip, None)
     response.set_cookie(
-        "relay_session",
+        SESSION_COOKIE,
         SESSION,
         httponly=True,
         samesite="strict",
@@ -579,7 +583,7 @@ async def login(body: Login, request: Request, response: Response):
 
 @app.post("/api/logout")
 async def logout(response: Response):
-    response.delete_cookie("relay_session")
+    response.delete_cookie(SESSION_COOKIE)
     return {"ok": True}
 
 
