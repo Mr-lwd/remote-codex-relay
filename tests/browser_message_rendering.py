@@ -32,6 +32,38 @@ REPLY = (
     "行内公式 $x^2$。\n\n$$x^2+y^2=z^2$$\n"
 )
 
+MATRIX = r"\begin{bmatrix}1 & 2 \\ 3 & 4\end{bmatrix}"
+ALIGNED = "\\begin{aligned}\na &= b+c \\\\\nd &= \\frac{1}{2}\n\\end{aligned}"
+LONG_MATH = " + ".join(f"x_{{{i}}}" for i in range(50))
+# Each case checks the actual TeX delivered to KaTeX, not only a wrapper class.
+MATH_CASES = [
+    ("paren", r"行内 \(\frac{a_1}{b^2}\) 继续。", r"\frac{a_1}{b^2}", False),
+    ("bracket", r"\[E=mc^2\]", "E=mc^2", True),
+    ("dollars", "$$x^2+y^2=z^2$$", "x^2+y^2=z^2", True),
+    ("prose", r"前文 $$\sum_{i=1}^{n}i$$ 后文", r"\sum_{i=1}^{n}i", True),
+    ("matrix", "\\[\n" + MATRIX + "\n\\]", MATRIX, True),
+    ("aligned", "$$\n" + ALIGNED + "\n$$", ALIGNED, True),
+    ("compact-aligned", "$$" + ALIGNED + "$$", ALIGNED, True),
+    ("blank", "\\[\na+b\n\nc+d\n\\]", "a+b\n\nc+d", True),
+    ("quote", "> \\[\n> " + MATRIX + "\n> \\]", MATRIX, True),
+    ("list", "1. 推导\n\n   \\[\n   x=y\n   \\]", "x=y", True),
+    ("quoted-dollars", "> $$x=y$$", "x=y", True),
+    ("table", "| 式子 |\n| --- |\n| \\(a_i^2\\) |", "a_i^2", False),
+    ("math-fence", "```math\n" + MATRIX + "\n```", MATRIX + "\n", True),
+    ("crlf", "\\[\r\nx=y\r\n\\]", "x=y", True),
+    ("long", "\\[" + LONG_MATH + "\\]", LONG_MATH, True),
+    ("escaped-dollar", r"\(\text{cost: }\$10\)", r"\text{cost: }\$10", False),
+    ("triple-dollar", "$$$x^2$$$", "x^2", False),
+]
+LITERAL_MATH = (
+    "`\\(x\\)` and ``\\[y\\]``\n\n"
+    "``\n$$x$$\n``\n\n"
+    "> ```text\n> $$x^2$$\n> \\[y\\]\n> ```\n\n"
+    "- 示例\n\n  ```latex\n  \\(z\\)\n  ```\n\n"
+    "缩进代码：\n\n    $$a=b$$\n\n"
+    r"转义：\\(x\\)、\$5、\$10。"
+)
+
 
 def check_message_rendering(page, enforce=True):
     raw = io.BytesIO()
@@ -62,6 +94,16 @@ def check_message_rendering(page, enforce=True):
         },
         {"id": "reply", "role": "assistant", "text": REPLY, "at": "2026-01-01T00:00:01Z"},
     ]
+    messages.extend(
+        {"id": "math-" + name, "role": "assistant", "text": text} for name, text, _, _ in MATH_CASES
+    )
+    messages.extend(
+        [
+            {"id": "math-literal", "role": "assistant", "text": LITERAL_MATH},
+            {"id": "math-invalid", "role": "assistant", "text": r"\[\frac{a}{\]"},
+            {"id": "math-stream", "role": "assistant", "text": r"推导：\[\frac{"},
+        ]
+    )
     submitted = []
 
     def detail():
@@ -104,7 +146,7 @@ def check_message_rendering(page, enforce=True):
     page.route("**/api/**", route_api)
     page.add_init_script("""localStorage.setItem('relay-thread', 'literal-fixture');
       window.EventSource = class {
-        constructor() {} addEventListener() {} close() {}
+        constructor() { window.mathStream = this; } addEventListener() {} close() {}
       };
     """)
     page.reload()
@@ -129,6 +171,40 @@ def check_message_rendering(page, enforce=True):
     expect(reply.locator("table")).to_contain_text("42")
     expect(reply.locator(".katex")).to_have_count(2)
     expect(reply.locator(".katex-display")).to_have_count(1)
+    for name, _, tex, display in MATH_CASES:
+        formula = page.locator(f"[data-message-id=math-{name}]")
+        expect(formula.locator(".katex")).to_have_count(1)
+        expect(formula.locator(".katex-error")).to_have_count(0)
+        expect(formula.locator(".katex-display")).to_have_count(int(display))
+        actual = formula.locator('annotation[encoding="application/x-tex"]').text_content()
+        assert actual == tex, (name, actual, tex)
+    code = page.locator("[data-message-id=math-literal]")
+    expect(code.locator(".katex")).to_have_count(0)
+    expect(code.locator("p > code").nth(2)).to_have_text("$$x$$")
+    assert code.locator("pre code").all_text_contents() == [
+        "$$x^2$$\n\\[y\\]\n",
+        "\\(z\\)\n",
+        "$$a=b$$\n",
+    ]
+    expect(page.locator("[data-message-id=math-invalid] .katex-error")).to_have_text(r"\frac{a}{")
+    streamed = page.locator("[data-message-id=math-stream]")
+    expect(streamed.locator(".katex")).to_have_count(0)
+    for text in [r"推导：\[\frac{a}{b}", r"推导：\[\frac{a}{b}\] 完成。"]:
+        messages[-1]["text"] = text
+        page.evaluate(
+            "payload => window.mathStream.onmessage({data:JSON.stringify(payload)})",
+            {"threads": [detail()], "selected": detail()},
+        )
+        if text.endswith("完成。"):
+            expect(streamed.locator(".katex-display")).to_have_count(1)
+            expect(streamed).to_contain_text("完成。")
+        else:
+            expect(streamed).to_contain_text(r"\frac{a}{b}")
+    expect(streamed.locator(".katex-error")).to_have_count(0)
+    display = page.locator("[data-message-id=math-long] .katex-display")
+    expect(display).to_have_css("overflow-x", "auto")
+    assert display.evaluate("el => el.scrollWidth > el.clientWidth")
+    assert page.evaluate("async () => (await document.fonts.load('16px KaTeX_Main')).length > 0")
     expect(user.get_by_role("link", name="下载 reference.txt", exact=True)).to_have_attribute(
         "href", "/api/media/document"
     )
@@ -147,6 +223,10 @@ def check_message_rendering(page, enforce=True):
         assistantMarkdownMathAndCode=True,
         userAttachmentsPreserved=True,
         sendPayloadUnchanged=True,
+        latexDelimitersAndContainers=len(MATH_CASES),
+        mathCodePreserved=True,
+        streamedMath=True,
+        invalidMathFallback=True,
     )
     return result
 

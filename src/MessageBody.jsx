@@ -5,25 +5,7 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import 'katex/dist/katex.min.css';
 import { ImageCard, FileCard } from './Images';
-
-// A standalone $$ equation $$ is a display equation. Leave code fences intact.
-export function mathBlocks(text = '') {
-  let fence = null;
-  return text
-    .split('\n')
-    .map((line) => {
-      const marker = line.match(/^ {0,3}(`{3,}|~{3,})/);
-      if (marker) {
-        if (!fence) fence = marker[1];
-        else if (marker[1][0] === fence[0] && marker[1].length >= fence.length) fence = null;
-        return line;
-      }
-      if (fence) return line;
-      const block = line.match(/^\s*\$\$\s*(\S.*?)\s*\$\$\s*$/);
-      return block ? `$$\n${block[1]}\n$$` : line;
-    })
-    .join('\n');
-}
+import remarkRelayMath from './remarkRelayMath';
 
 export const MessageBody = memo(function MessageBody({ message: m, onPreview }) {
   return (
@@ -32,7 +14,7 @@ export const MessageBody = memo(function MessageBody({ message: m, onPreview }) 
         <div className="message-user-text">{m.text}</div>
       ) : (
         <Markdown
-          remarkPlugins={[remarkGfm, remarkMath]}
+          remarkPlugins={[remarkGfm, remarkMath, remarkRelayMath]}
           rehypePlugins={[[rehypeKatex, { strict: false, trust: false }]]}
           components={{
             table: ({ children }) => (
@@ -74,7 +56,7 @@ export const MessageBody = memo(function MessageBody({ message: m, onPreview }) 
             },
           }}
         >
-          {mathBlocks(m.text)}
+          {m.text || ''}
         </Markdown>
       )}
       {m.images?.length > 0 && (

@@ -38,6 +38,8 @@ npm run build
 
 输入性能验收使用含表格和公式的 10 条近期记录及 60 条完整历史，测量实际键盘输入延迟，并检查输入或相同推送不会重建历史 DOM、更新后的回复和附件仍可显示。已纳入 smoke，也可运行 `tests/browser_typing.py --url 地址 --output runtime/typing-check`；`--baseline` 记录对比数据而不强制性能断言。
 
+消息排版验收覆盖美元和反斜杠公式分隔符、多行矩阵、列表、引用、表格、代码原文、错误公式回退、SSE 分段更新及长公式横向滚动。桌面和手机检查已纳入 smoke，也可运行 `tests/browser_message_rendering.py --url 地址 --output runtime/message-check`，所有消息和 API 均使用合成数据。
+
 这套测试使用合成历史，不执行模型；它不能证明你的账号支持目标协议或所选模型，也不替代手机真机验证。
 
 ## 安装与目录迁移验收
