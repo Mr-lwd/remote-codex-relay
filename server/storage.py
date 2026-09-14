@@ -23,6 +23,8 @@ def initialize(data_dir):
           text TEXT, created REAL, status TEXT);
         CREATE TABLE IF NOT EXISTS command_records(id TEXT PRIMARY KEY, thread_id TEXT,
           command TEXT, input TEXT, status TEXT, message TEXT, job_id TEXT, created REAL);
+        CREATE TABLE IF NOT EXISTS input_replies(thread_id TEXT, id TEXT, status TEXT,
+          deadline REAL, automatic INTEGER, answered_at REAL, PRIMARY KEY(thread_id,id));
         """)
         for table in ("jobs", "pending"):
             if "model" not in {r["name"] for r in c.execute(f"PRAGMA table_info({table})")}:

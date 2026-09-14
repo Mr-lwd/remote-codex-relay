@@ -114,6 +114,8 @@ def check_sessions(page):
             route.fulfill(json={"jobId": "fixture-job"})
         elif path.startswith("/api/jobs/"):
             route.fulfill(json={"thread_id": "C"})
+        elif "/requests/" in path and path.endswith("/draft"):
+            route.fulfill(json={"ok": True})
         elif "/requests/" in path:
             tid = path.split("/")[3]
             state[tid]["requests"] = []
@@ -312,7 +314,12 @@ def check_sessions(page):
     # Old history loads cannot set another view to full history, including a round trip.
     delay(
         "/api/threads/A?history=all",
-        lambda: page.get_by_role("button", name="向上滚动加载更早记录", exact=True).click(),
+        # This case holds the request while switching sessions. Scrolling the
+        # button into view can itself start loading and disable it before the
+        # click (especially during the mobile drawer's closing animation).
+        lambda: page.get_by_role("button", name="向上滚动加载更早记录", exact=True).dispatch_event(
+            "click"
+        ),
     )
     choose("B")
     expect(page.get_by_role("button", name="向上滚动加载更早记录", exact=True)).to_be_enabled()

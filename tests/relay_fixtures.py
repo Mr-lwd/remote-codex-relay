@@ -12,7 +12,7 @@ def relay(tmp_path, monkeypatch):
         schemas = [
             r[0]
             for r in c.execute(
-                "SELECT sql FROM sqlite_master WHERE type='table' AND name IN ('jobs','pending','notes','command_records')"
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name IN ('jobs','pending','notes','command_records','input_replies')"
             )
         ]
 

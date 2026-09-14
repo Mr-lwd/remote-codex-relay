@@ -76,6 +76,8 @@ import { DirectoryPicker } from './DirectoryPicker';
 import { GoalBar } from './GoalBar';
 import { MessageQueue } from './MessageQueue';
 import { useSessionState } from './sessionState';
+import { useReplyScroll } from './useReplyScroll';
+import { InteractionCard } from './InteractionCard';
 import './styles.css';
 import './responsive.css';
 
@@ -98,13 +100,24 @@ function useVisibleViewport() {
     const update = () => {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
+        // Pinch zoom magnifies the existing layout. Its smaller visual viewport
+        // is not a keyboard resize; rewriting the fixed shell makes it jump.
+        if (viewport && Math.abs(viewport.scale - 1) > 0.01) return;
+        const height = Math.round(viewport?.height ?? window.innerHeight);
+        if (!Number.isFinite(height) || height <= 0) return;
+        const top = Math.max(0, Math.round(viewport?.offsetTop || 0));
         const root = document.documentElement;
-        root.style.setProperty('--viewport-height', `${viewport?.height || window.innerHeight}px`);
-        root.style.setProperty('--viewport-top', `${viewport?.offsetTop || 0}px`);
-        root.classList.toggle(
-          'keyboard-open',
-          Boolean(viewport && window.innerHeight - viewport.height > 140),
-        );
+        // Keyboard animations and caret panning emit repeated/subpixel events.
+        // Apply actual geometry changes once without rewriting the whole page.
+        for (const [name, value] of [
+          ['--viewport-height', `${height}px`],
+          ['--viewport-top', `${top}px`],
+        ]) {
+          if (root.style.getPropertyValue(name) !== value) root.style.setProperty(name, value);
+        }
+        const keyboardOpen = Boolean(viewport && window.innerHeight - height > 140);
+        if (root.classList.contains('keyboard-open') !== keyboardOpen)
+          root.classList.toggle('keyboard-open', keyboardOpen);
       });
     };
     update();
@@ -129,12 +142,17 @@ function ResponsivePanel({ drawer, open, onOpenChange, side, title, children }) 
         onCloseAutoFocus={(e) => {
           e.preventDefault();
           requestAnimationFrame(() => {
-            if (!document.querySelector('[role="dialog"]'))
+            // Closing can finish after the user has focused the composer.
+            // Restore the opener only when focus has fallen back to the body.
+            if (
+              document.activeElement === document.body &&
+              !document.querySelector('[role="dialog"]')
+            )
               document
                 .querySelector(
                   side === 'left' ? '.mobile-menu' : '.conversation-header .activity-toggle',
                 )
-                ?.focus();
+                ?.focus({ preventScroll: true });
           });
         }}
       >
@@ -293,131 +311,6 @@ const MessageList = memo(function MessageList({ messages, onPreview }) {
     ),
   );
 });
-
-function InteractionCard({ request, onReply }) {
-  const [answers, setAnswers] = useState({}),
-    [busy, setBusy] = useState(false),
-    [error, setError] = useState('');
-  async function respond(body) {
-    setBusy(true);
-    setError('');
-    try {
-      await onReply(request.id, body);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setBusy(false);
-    }
-  }
-  return (
-    <section
-      className="interaction-card"
-      aria-label={request.type === 'input' ? 'Codex 等待你的回答' : 'Codex 等待批准'}
-    >
-      <div className="interaction-title">
-        <strong>{request.type === 'input' ? 'Codex 需要你的回答' : 'Codex 请求操作批准'}</strong>
-        <span>等待你处理</span>
-      </div>
-      {request.reason && <p>{request.reason}</p>}
-      {request.command && <pre>{request.command}</pre>}
-      {request.cwd && <p className="interaction-cwd">目录：{request.cwd}</p>}
-      {request.grantRoot && <p>申请写入目录：{request.grantRoot}</p>}
-      {request.changes?.map((change, i) => (
-        <div key={i}>
-          <strong>{change.path}</strong>
-          <pre>{change.diff || change.kind?.type}</pre>
-        </div>
-      ))}
-      {request.type === 'permissions' && <pre>{JSON.stringify(request.permissions, null, 2)}</pre>}
-      {request.type === 'input' ? (
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            respond({
-              answers: Object.fromEntries(
-                request.questions.map((q) => [q.id, [answers[q.id] || '']]),
-              ),
-            });
-          }}
-        >
-          {request.questions.map((q) => (
-            <fieldset key={q.id}>
-              <legend>{q.question}</legend>
-              {q.options?.map((o) => (
-                <label className="answer-option" key={o.label}>
-                  <input
-                    type="radio"
-                    name={request.id + q.id}
-                    checked={answers[q.id] === o.label}
-                    onChange={() => setAnswers({ ...answers, [q.id]: o.label })}
-                  />
-                  <span>
-                    {o.label}
-                    {o.description && <small>{o.description}</small>}
-                  </span>
-                </label>
-              ))}
-              <input
-                aria-label={q.header || q.question}
-                type={q.isSecret ? 'password' : 'text'}
-                placeholder="输入回答，也可补充自己的想法"
-                value={answers[q.id] || ''}
-                onChange={(e) => setAnswers({ ...answers, [q.id]: e.target.value })}
-                required
-                autoComplete="off"
-              />
-            </fieldset>
-          ))}
-          <Button
-            type="submit"
-            disabled={busy || request.questions.some((q) => !answers[q.id]?.trim())}
-          >
-            提交回答
-          </Button>
-        </form>
-      ) : (
-        <div className="approval-actions">
-          <Button type="button" disabled={busy} onClick={() => respond({ decision: 'accept' })}>
-            批准本次
-          </Button>
-          <Button
-            type="button"
-            variant="soft"
-            disabled={busy}
-            onClick={() => respond({ decision: 'acceptForSession' })}
-          >
-            本次运行允许
-          </Button>
-          <Button
-            type="button"
-            color="red"
-            variant="soft"
-            disabled={busy}
-            onClick={() => respond({ decision: 'decline' })}
-          >
-            拒绝
-          </Button>
-          {request.type !== 'permissions' && (
-            <Button
-              type="button"
-              color="gray"
-              variant="soft"
-              disabled={busy}
-              onClick={() => respond({ decision: 'cancel' })}
-            >
-              拒绝并中止
-            </Button>
-          )}
-        </div>
-      )}
-      {error && (
-        <p role="alert" className="error">
-          {error}
-        </p>
-      )}
-    </section>
-  );
-}
 
 function Login({ onLogin }) {
   const [password, setPassword] = useState(''),
@@ -587,10 +480,14 @@ function App() {
   const composedText = commandToken
     ? `/${commandToken}${text.trimStart() ? ' ' + text.trimStart() : ''}`
     : text;
-  const end = useRef(null),
-    input = useRef(null),
-    scroll = useRef(null),
-    stick = useRef(true);
+  const input = useRef(null);
+  const { scroll, timeline, end, pause, resume, noteScroll } = useReplyScroll({
+    scope: selected,
+    enabled: auth,
+    detail,
+    historyAnchor,
+    previousScroll,
+  });
   const preference = normalizePreference(
     modelPrefs[selected] || { id: detail?.model, effort: detail?.reasoningEffort },
   );
@@ -670,6 +567,9 @@ function App() {
     await api('/threads/' + selected + '/requests/' + requestId, body);
     await refreshGoal(selected);
   }
+  async function saveAnswerDraft(requestId, answers) {
+    await api('/threads/' + selected + '/requests/' + requestId + '/draft', { answers });
+  }
   function selectModel(value) {
     setModelPrefs((current) => {
       const next = { ...current, [selected]: value };
@@ -707,11 +607,17 @@ function App() {
     const onKey = (e) => {
       if (
         e.key.toLowerCase() === 'n' &&
+        !e.defaultPrevented &&
+        !e.isComposing &&
+        e.keyCode !== 229 &&
         !e.ctrlKey &&
         !e.metaKey &&
         !e.altKey &&
         !['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName) &&
-        !e.target.isContentEditable
+        !e.target.isContentEditable &&
+        !e.target.closest?.(
+          '[role="menu"], [role="listbox"], [role="dialog"], [role="alertdialog"], [data-question-card]',
+        )
       ) {
         e.preventDefault();
         setNewOpen(true);
@@ -781,35 +687,7 @@ function App() {
     historyAnchor.current = null;
     previousScroll.current = 0;
     touchStart.current = null;
-    stick.current = true;
   }, [selected]);
-  useLayoutEffect(() => {
-    const el = scroll.current;
-    if (!el) return;
-    if (historyAnchor.current?.tid === selected && detail?.history?.mode === 'all') {
-      const anchor = historyAnchor.current;
-      el.scrollTop = el.scrollHeight - anchor.height + anchor.top;
-      previousScroll.current = el.scrollTop;
-      historyAnchor.current = null;
-    } else if (stick.current) {
-      el.scrollTop = el.scrollHeight;
-      previousScroll.current = el.scrollTop;
-    }
-  }, [
-    detail?.messages?.length,
-    detail?.notes?.length,
-    detail?.commandRecords,
-    detail?.requests?.length,
-    detail?.history?.mode,
-    selected,
-  ]);
-  useEffect(() => {
-    const observer = new ResizeObserver(() => {
-      if (stick.current && scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight;
-    });
-    if (scroll.current) observer.observe(scroll.current);
-    return () => observer.disconnect();
-  }, [auth, selected]);
   useEffect(() => {
     setMobile(false);
   }, [navigationDrawer]);
@@ -853,7 +731,7 @@ function App() {
   }, [pending]);
   function choose(id) {
     if (id !== selected) setExpandedHistory(null);
-    stick.current = true;
+    if (id !== selected) resume();
     previousScroll.current = 0;
     historyAnchor.current = null;
     setSelected(id);
@@ -949,6 +827,9 @@ function App() {
       return;
     }
     setSending(true);
+    // Resume for a new turn before awaiting the network; scrolling while the
+    // request is pending must still take precedence over automatic positioning.
+    if (!['starting', 'running'].includes(detail.status)) resume();
     setCommandOpen(false);
     setError('');
     try {
@@ -978,7 +859,6 @@ function App() {
           };
         });
       }
-      if (isCurrentView()) stick.current = true;
       const info = commandInfo(value);
       if (info && ['plan', 'default'].includes(info.name)) selectControls(nextControls);
       await refreshGoal(selected);
@@ -1049,8 +929,18 @@ function App() {
       const next = await api('/threads/' + tid + '?history=all');
       if (!isCurrentView() || next.id !== tid) return;
       const el = scroll.current;
-      historyAnchor.current = { tid, height: el.scrollHeight, top: el.scrollTop };
-      stick.current = false;
+      const viewportTop = el.getBoundingClientRect().top + el.clientTop;
+      const message = [...el.querySelectorAll('[data-message-id]')].find(
+        (node) => node.getBoundingClientRect().bottom > viewportTop,
+      );
+      historyAnchor.current = {
+        tid,
+        height: el.scrollHeight,
+        top: el.scrollTop,
+        messageId: message?.dataset.messageId,
+        offset: message ? message.getBoundingClientRect().top - viewportTop : 0,
+      };
+      pause();
       setExpandedHistory(tid);
       if (view.revision === request.revision) setDetail(next);
     } catch (e) {
@@ -1066,7 +956,7 @@ function App() {
     const el = scroll.current;
     const upward = el.scrollTop < previousScroll.current;
     previousScroll.current = el.scrollTop;
-    stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
+    noteScroll();
     if (upward && el.scrollTop < 80) loadHistory();
   }
   async function refreshGoal(tid) {
@@ -1346,12 +1236,14 @@ function App() {
                 ref={scroll}
                 onScroll={scrollHistory}
                 onWheel={(e) => {
+                  if (e.deltaY) pause();
                   if (e.deltaY < 0 && scroll.current.scrollTop < 80) loadHistory();
                 }}
                 onTouchStart={(e) => {
                   touchStart.current = e.touches[0]?.clientY;
                 }}
                 onTouchMove={(e) => {
+                  if (Math.abs(e.touches[0]?.clientY - touchStart.current) > 3) pause();
                   if (
                     touchStart.current !== null &&
                     e.touches[0]?.clientY - touchStart.current > 20 &&
@@ -1360,72 +1252,90 @@ function App() {
                     loadHistory();
                 }}
               >
-                {pending && (
-                  <div className="pending">
-                    <span className="live-dot" />
-                    正在为新任务连接 Codex…
-                  </div>
-                )}
-                {!detail && selected && (
-                  <div className="loading-messages">
-                    <div className="skeleton" />
-                    <div className="skeleton" />
-                    <div className="skeleton" />
-                  </div>
-                )}
-                {!selected && (
-                  <div className="empty">
-                    <TerminalWindow size={40} weight="duotone" />
-                    <h2>下一件事，从这里开始。</h2>
-                    <p>创建任务，或从左侧选择已有会话。</p>
-                    <Button onClick={() => setNewOpen(true)}>
-                      <Plus />
-                      新建任务
-                    </Button>
-                  </div>
-                )}
-                {detail?.history?.hasMore && (
-                  <button
-                    type="button"
-                    className="history-more"
-                    disabled={historyLoading}
-                    onClick={loadHistory}
-                  >
-                    {historyLoading ? '正在加载历史记录…' : '向上滚动加载更早记录'}
-                  </button>
-                )}
-                {detail && (
-                  <div className="timeline-date">
-                    <span />
-                    会话记录 ·{' '}
-                    {messages.length
-                      ? new Date(messages[0].at).toLocaleDateString('zh-CN')
-                      : '今天'}
-                    <span />
-                  </div>
-                )}
-                <MessageList key={selected} messages={messages} onPreview={setPreviewImage} />
-                {workingState && (
-                  <div className="working" role="status">
-                    <span className="working-bars">
-                      <i />
-                      <i />
-                      <i />
-                    </span>
-                    {workingState.text}
-                  </div>
-                )}
-                {detail?.requests?.map((request) => (
-                  <InteractionCard
-                    key={selected + ':' + request.id}
-                    request={request}
-                    onReply={reply}
-                  />
-                ))}
-                <div ref={end} />
+                <div className="message-timeline" ref={timeline}>
+                  {pending && (
+                    <div className="pending">
+                      <span className="live-dot" />
+                      正在为新任务连接 Codex…
+                    </div>
+                  )}
+                  {!detail && selected && (
+                    <div className="loading-messages">
+                      <div className="skeleton" />
+                      <div className="skeleton" />
+                      <div className="skeleton" />
+                    </div>
+                  )}
+                  {!selected && (
+                    <div className="empty">
+                      <TerminalWindow size={40} weight="duotone" />
+                      <h2>下一件事，从这里开始。</h2>
+                      <p>创建任务，或从左侧选择已有会话。</p>
+                      <Button onClick={() => setNewOpen(true)}>
+                        <Plus />
+                        新建任务
+                      </Button>
+                    </div>
+                  )}
+                  {detail?.history?.hasMore && (
+                    <button
+                      type="button"
+                      className="history-more"
+                      disabled={historyLoading}
+                      onClick={loadHistory}
+                    >
+                      {historyLoading ? '正在加载历史记录…' : '向上滚动加载更早记录'}
+                    </button>
+                  )}
+                  {detail && (
+                    <div className="timeline-date">
+                      <span />
+                      会话记录 ·{' '}
+                      {messages.length
+                        ? new Date(messages[0].at).toLocaleDateString('zh-CN')
+                        : '今天'}
+                      <span />
+                    </div>
+                  )}
+                  <MessageList key={selected} messages={messages} onPreview={setPreviewImage} />
+                  {workingState && (
+                    <div className="working" role="status">
+                      <span className="working-bars">
+                        <i />
+                        <i />
+                        <i />
+                      </span>
+                      {workingState.text}
+                    </div>
+                  )}
+                  {detail?.requests
+                    ?.filter((request) => request.type !== 'input')
+                    .map((request) => (
+                      <InteractionCard
+                        key={selected + ':' + request.id}
+                        request={request}
+                        onReply={reply}
+                      />
+                    ))}
+                </div>
+                <div ref={end} aria-hidden="true" />
               </div>
               <div className="composer-area">
                 <div className="composer-context">
+                  {detail?.requests?.some((request) => request.type === 'input') && (
+                    <div className="input-request-list" aria-label="待回答的问题">
+                      {detail.requests
+                        .filter((request) => request.type === 'input')
+                        .map((request) => (
+                          <InteractionCard
+                            key={selected + ':' + request.id}
+                            request={request}
+                            onReply={reply}
+                            onDraft={saveAnswerDraft}
+                          />
+                        ))}
+                    </div>
+                  )}
                   {detail?.id === selected && (
                     <GoalBar
                       key={'goal:' + selected}

@@ -41,11 +41,16 @@ export function SketchPad({ open, scope, onClose, onAttach, disabled }) {
         onInteractOutside={(e) => e.preventDefault()}
         onCloseAutoFocus={(e) => {
           e.preventDefault();
-          requestAnimationFrame(() =>
+          requestAnimationFrame(() => {
+            // Closing can finish after a tap has focused the parent editor.
+            // Do not dismiss/reopen the software keyboard by stealing focus.
+            if (document.activeElement !== document.body) return;
             document
-              .querySelector('.task-dialog button, .composer [aria-label="指令菜单"]')
-              ?.focus(),
-          );
+              .querySelector(
+                '.task-dialog[data-state="open"] button, .composer [aria-label="指令菜单"]',
+              )
+              ?.focus({ preventScroll: true });
+          });
         }}
       >
         {open && (

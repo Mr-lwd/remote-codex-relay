@@ -34,4 +34,8 @@ def busy_counts(data_dir):
                 result[key] = db.execute(
                     f"SELECT count(*) FROM {table} WHERE {condition}"
                 ).fetchone()[0]
+        if "input_replies" in tables:
+            result["pending"] += db.execute(
+                "SELECT count(*) FROM input_replies WHERE status='sending'"
+            ).fetchone()[0]
     return result

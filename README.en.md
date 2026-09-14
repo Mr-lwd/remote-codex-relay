@@ -113,6 +113,7 @@ If you remain on the login page after entering the password, check `secure_cooki
 - **Sessions across devices** — Use the same workspace on computers, tablets, and phones. Browse real directories and create, rename, or archive sessions.
 - **Persistent goals** — Use `/goal` to keep working toward an objective, then edit, pause, resume, or clear it above the message composer.
 - **Models and permissions** — Choose a model and reasoning effort per session, respond to approvals and questions in the conversation, and stop a running response.
+- **Interactive questions** — Select an option or type an answer to Codex's questions. After 30 seconds, the server submits your current choice automatically, falling back to the recommended or first option; unanswered text questions are marked as unfilled. Operation approvals remain manual.
 - **Files and sketches** — Upload and receive images, PDFs, Office documents, and other supported files. Draw on a multicolor canvas and attach the sketch as an image reference.
 - **Readable conversations** — Render Markdown tables, math, and separate command blocks. The latest 10 records load by default; scroll up to view the full history.
 - **Live task status** — Messages and task activity stay synchronized. Open execution details when needed and queue follow-up messages while a task is running.

@@ -11,12 +11,14 @@
 | `server/app.py` | API、认证、会话适配、队列与目标生命周期、SSE |
 | `server/storage.py` | Relay SQLite schema 的幂等升级、连接、口令创建 |
 | `server/codex_rpc.py` | 双向 JSON-RPC、请求关联、通知队列、显式审批 |
+| `server/user_inputs.py` | 异步问题解析、问题标识、服务端 30 秒期限及答案去重 |
 | `server/directories.py` | 真实目录浏览、自然排序、搜索、分页与路径边界 |
 | `server/media.py` / `files.py` | 图片/文档校验、不可猜测附件 ID、持久化、认证下载 |
 | `src/main.jsx` | 页面状态、会话切换、消息流、发送与命令交互 |
 | `src/sessionState.js` | 按会话保存草稿、发送/停止状态与错误，异步更新保留原会话归属 |
 | `src/MessageQueue.jsx` | 待发送列表、逐条删除与过期推送处理 |
 | `src/ModelPicker.jsx` / `preferences.js` | 模型与强度菜单、选择校验、本地偏好读取 |
+| `src/InteractionCard.jsx` | 点选答案、自由填写、草稿同步和倒计时显示 |
 | `src/GoalBar.jsx` / `DirectoryPicker.jsx` | 目标控制及目录浏览 |
 | `src/MessageBody.jsx` / `commands.js` | Markdown/数学渲染及命令展示语义 |
 | `src/Images.jsx` / `SketchPad.jsx` | 文件交互、图片预览及画板 |
@@ -32,6 +34,8 @@
 ## 功能约束
 
 网页管理的任务可以停止和审批；被外部 IDE 占用的会话通过 CLI 队列追加纯文字，不能从网页接管其模型、图片、审批和停止。目标自动继续沿用启动时的模型、强度与权限。
+
+原生 `item/tool/requestUserInput` 通过对应 RPC 回答。当前 CLI 的 `request_user_input_async` 调用从只读 rollout 提取，收到 `accepted: true` 后才显示；答案使用原始 `questionItemId` 封装。网页托管的活动任务通过 `turn/steer` 和 `expectedTurnId` 直接接收答案，外部客户端只能经 CLI 队列投递，具体读取时机取决于该客户端。问题进入服务端管理后期限持久化，填写中的草稿仅在内存保存。新的任务开始后旧问题失效，发送状态不明时禁止自动重投。原生问答协议参考 [OpenAI App Server 文档](https://developers.openai.com/codex/app-server)。
 
 初始消息接口和 SSE 只传最近 10 条合并记录；按需加载完整历史并保持滚动位置。仅显示用户消息、对外回复和工具摘要，过滤内部推理及系统内容。
 

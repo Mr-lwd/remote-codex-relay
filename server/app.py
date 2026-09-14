@@ -23,13 +23,21 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel, Field
 from server.media import MediaStore, MAX_BYTES, MAX_IMAGES, image_references
-from server.codex_rpc import CodexRPC, receive_request, permission_settings
+from server.codex_rpc import CodexRPC, RPCRejected, receive_request, permission_settings
 from server.directories import browse, work_directory, WORKSPACE_ROOT
 
 from server.config import ROOT, settings
 from server import __version__
 from server.storage import connect, initialize, access_password
 from server.maintenance import maintenance_lock
+from server.user_inputs import (
+    DeliveryUncertain,
+    InputManager,
+    display_reply,
+    observe_questions,
+    pending_questions,
+    reply_envelope,
+)
 
 DATA = settings.data_dir
 DIST = settings.dist_dir
@@ -201,6 +209,7 @@ def read_rollout(row):
                 d = json.loads(line)
             except ValueError:
                 continue
+            observe_questions(state, d)
             p = d.get("payload", {})
             typ = p.get("type")
             at = d.get("timestamp")
@@ -223,7 +232,7 @@ def read_rollout(row):
                                     "imageRefs": refs,
                                     "id": item.get("id", ident),
                                     "role": "user" if item_type == "userMessage" else "assistant",
-                                    "text": redact(text),
+                                    "text": redact(display_reply(text)),
                                     "at": at,
                                     "kind": item.get("phase", "message"),
                                 }
@@ -301,7 +310,7 @@ def read_rollout(row):
                                 "imageRefs": refs,
                                 "id": ident,
                                 "role": "user" if typ == "user_message" else "assistant",
-                                "text": redact(text),
+                                "text": redact(display_reply(text)),
                                 "at": at,
                                 "kind": p.get("phase", "message"),
                             }
@@ -410,11 +419,9 @@ def snapshot(row, detail=False, history_limit=None):
     )
     out["reasoningEffort"] = job["effort"] if job else None
     out["interactive"] = row["id"] in clients
-    out["requests"] = (
-        [public_request(r) for r in clients[row["id"]].inbox.values()]
-        if row["id"] in clients
-        else []
-    )
+    out["requests"] = []
+    if detail:
+        out["requests"] = thread_requests(row, state)
     out["preview"] = next(
         (m["text"][:160] for m in reversed(state["messages"]) if m["role"] == "assistant"),
         "等待新的指令",
@@ -519,6 +526,191 @@ send_locks = collections.defaultdict(asyncio.Lock)
 attempts = collections.defaultdict(list)
 
 
+def thread_requests(row, state):
+    tid = row["id"]
+    client = clients.get(tid)
+    native = list(client.inbox.values()) if client else []
+    native_ids = {r.get("itemId") for r in native if r["type"] == "input"}
+    candidates = native + [
+        request
+        for request in pending_questions(state, tid)
+        if request.get("callId") not in native_ids
+    ]
+    active = bool(client) or writer_alive(tid)
+    known = {request["id"] for request in candidates if request["type"] == "input"}
+    with db() as connection:
+        saved = connection.execute(
+            "SELECT id FROM input_replies WHERE thread_id=? AND status IN ('pending','failed')",
+            (tid,),
+        ).fetchall()
+    for record in saved:
+        if record["id"] not in known:
+            input_manager.expire(tid, record["id"])
+    public = []
+    for request in candidates:
+        if request["type"] == "input":
+            request = input_manager.register(
+                request, automatic=active and request.get("autoReply", True)
+            )
+        if request:
+            public.append(public_request(request))
+    return public
+
+
+async def deliver_input(request, answers, automatic):
+    tid, ident = request["threadId"], request["id"]
+    queued_external = False
+    row = find_thread(tid)
+    if request.get("source", "rpc") == "rpc":
+        client = clients.get(tid)
+        native = client.inbox.get(ident) if client else None
+        if not native or native.get("responding"):
+            raise ValueError("该问题已处理或已失效")
+        native["responding"] = True
+        try:
+            await client.write(
+                {
+                    "id": native["rpcId"],
+                    "result": {"answers": {k: {"answers": v} for k, v in answers.items()}},
+                }
+            )
+        except Exception:
+            native["responding"] = False
+            raise RuntimeError("回复未能送达 Codex，请重试") from None
+        client.inbox.pop(ident, None)
+    else:
+        current = next(
+            (r for r in pending_questions(read_rollout(row), tid) if r["id"] == ident), None
+        )
+        if not current or {q["id"] for q in current["questions"]} != set(answers):
+            raise ValueError("该问题已处理或已失效")
+        text = reply_envelope(current, answers)
+        client = clients.get(tid)
+        if client:
+            turn_id = client.turn_id
+            if not turn_id:
+                raise RuntimeError("当前任务尚未准备好接收回答，请稍后重试")
+            try:
+                result = await client.call(
+                    "turn/steer",
+                    {
+                        "threadId": tid,
+                        "expectedTurnId": turn_id,
+                        "input": [{"type": "text", "text": text, "text_elements": []}],
+                    },
+                    timeout=25,
+                )
+            except RPCRejected:
+                raise RuntimeError("当前任务未接受回答，请刷新会话后重试") from None
+            except (RuntimeError, OSError):
+                # The server may have consumed the request before the
+                # connection failed. Never fall back to a second delivery.
+                raise DeliveryUncertain("投递结果待确认，请查看会话，避免重复提交") from None
+            if result.get("turnId") != turn_id:
+                raise DeliveryUncertain("回答接收状态异常，请查看会话，避免重复提交")
+        elif writer_alive(tid):
+            # External clients have no Relay-owned RPC connection. Their CLI
+            # queue is consumed according to the owning client's schedule.
+            proc = await asyncio.create_subprocess_exec(
+                CODEX,
+                "queue",
+                "--thread",
+                tid,
+                "--message",
+                text,
+                env={**os.environ, "CODEX_HOME": str(CODEX_HOME)},
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            try:
+                await asyncio.wait_for(proc.communicate(), 25)
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+                raise DeliveryUncertain("投递结果待确认，请查看会话，避免重复提交") from None
+            if proc.returncode:
+                raise RuntimeError("Codex 未接受回答，请重试")
+            queued_external = True
+        else:
+            with db() as connection:
+                job = connection.execute(
+                    "SELECT model,effort,options FROM jobs WHERE thread_id=? ORDER BY created DESC LIMIT 1",
+                    (tid,),
+                ).fetchone()
+            previous = json.loads(job["options"] or "{}") if job else {}
+            options = {
+                key: previous[key] for key in ("permission", "collaboration") if key in previous
+            }
+            launch(
+                text,
+                row["cwd"],
+                tid,
+                job["model"] if job else row.get("model"),
+                job["effort"] if job else None,
+                options,
+            )
+    # Never persist secret/freeform answer contents in Relay's bookkeeping.
+    note(
+        tid,
+        "system",
+        ("30 秒未提交，系统自动处理：" if automatic else "")
+        + (
+            "回答已进入外部客户端队列，等待该客户端接收"
+            if queued_external
+            else "已回复 Codex 的问题"
+        ),
+        "interaction",
+    )
+
+
+input_manager = InputManager(lambda: db(), deliver_input)
+
+
+async def input_deadlines():
+    deliveries = set()
+
+    async def deliver_due():
+        try:
+            with maintenance_lock(DATA):
+                await input_manager.tick()
+        except (BlockingIOError, HTTPException, OSError, sqlite3.Error):
+            pass
+
+    try:
+        while True:
+            try:
+                with maintenance_lock(DATA):
+                    tracked = {tid for tid, _ in input_manager.pending}
+                    with db() as connection:
+                        tracked.update(
+                            record["thread_id"]
+                            for record in connection.execute(
+                                "SELECT thread_id FROM input_replies WHERE status='pending' AND deadline IS NOT NULL"
+                            )
+                        )
+                    current_rows = rows()
+                    available = {row["id"] for row in current_rows}
+                    for tid, ident in list(input_manager.pending):
+                        if tid not in available:
+                            input_manager.expire(tid, ident)
+                    for row in current_rows:
+                        if row["id"] in tracked or row["id"] in clients or writer_alive(row["id"]):
+                            thread_requests(row, read_rollout(row))
+                # A slow transport for one question must not delay discovery or
+                # another thread's timer. Each submission still owns its lock.
+                task = asyncio.create_task(deliver_due())
+                deliveries.add(task)
+                task.add_done_callback(deliveries.discard)
+            except (BlockingIOError, HTTPException, OSError, sqlite3.Error):
+                # Maintenance/read failures never reset a persisted deadline.
+                pass
+            await asyncio.sleep(0.5)
+    finally:
+        for task in deliveries:
+            task.cancel()
+        await asyncio.gather(*deliveries, return_exceptions=True)
+
+
 @contextlib.asynccontextmanager
 async def lifespan(app):
     # Never claim a previous process is still controlled after a server restart.
@@ -529,7 +721,16 @@ async def lifespan(app):
         c.execute(
             "UPDATE command_records SET status='detached',message='服务已重启，请查看会话实际状态。' WHERE status='starting' AND job_id IS NULL"
         )
-    yield
+        c.execute(
+            "UPDATE input_replies SET status='uncertain',deadline=NULL WHERE status='sending'"
+        )
+    deadlines = asyncio.create_task(input_deadlines())
+    try:
+        yield
+    finally:
+        deadlines.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await deadlines
     for task in tasks:
         task.cancel()
 
@@ -923,11 +1124,19 @@ def command_result(ident, status, message="", job_id=None):
 
 
 def public_request(request):
-    return {
+    result = {
         k: json.loads(redact(json.dumps(v, ensure_ascii=False)))
         for k, v in request.items()
-        if k not in ("rpcId", "responding")
-    }
+        if k not in ("rpcId", "responding", "draftAnswers", "accepted", "callId", "itemId")
+    } | {"serverNow": time.time()}
+    if request["type"] == "input":
+        public_ids = {q["id"] for q in request["questions"] if not q.get("isSecret")}
+        result["savedAnswers"] = {
+            key: [redact(value) for value in values]
+            for key, values in request.get("draftAnswers", {}).items()
+            if key in public_ids
+        }
+    return result
 
 
 async def execute(job_id, prompt, cwd, tid=None, model=None, effort=None, options=None):
@@ -1321,26 +1530,40 @@ class InteractionReply(BaseModel):
     answers: dict[str, list[str]] | None = None
 
 
+@app.post("/api/threads/{tid}/requests/{request_id}/draft")
+async def draft_request(tid: str, request_id: str, body: InteractionReply):
+    row = find_thread(tid)
+    thread_requests(row, read_rollout(row))
+    try:
+        input_manager.draft(tid, request_id, body.answers)
+    except ValueError as error:
+        raise HTTPException(409, str(error)) from None
+    return {"ok": True}
+
+
 @app.post("/api/threads/{tid}/requests/{request_id}")
 async def answer_request(tid: str, request_id: str, body: InteractionReply):
     find_thread(tid)
     client = clients.get(tid)
     request = client.inbox.get(request_id) if client else None
+    if (request and request["type"] == "input") or request_id.startswith("async-"):
+        if request:
+            input_manager.register(request, automatic=request.get("autoReply", True))
+        else:
+            row = find_thread(tid)
+            thread_requests(row, read_rollout(row))
+        try:
+            await input_manager.answer(tid, request_id, body.answers)
+        except ValueError as error:
+            raise HTTPException(
+                400 if (tid, request_id) in input_manager.pending else 409, str(error)
+            ) from None
+        except (RuntimeError, OSError) as error:
+            raise HTTPException(502, str(error)) from None
+        return {"ok": True}
     if not request or request["threadId"] != tid or request["responding"]:
         raise HTTPException(409, "该请求已处理或已失效，请刷新会话")
-    if request["type"] == "input":
-        expected = {q["id"] for q in request["questions"]}
-        if (
-            body.answers is None
-            or set(body.answers) != expected
-            or any(
-                not a or not any(x.strip() for x in a) or sum(len(x) for x in a) > 10000
-                for a in body.answers.values()
-            )
-        ):
-            raise HTTPException(400, "请回答每个问题")
-        result = {"answers": {k: {"answers": v} for k, v in body.answers.items()}}
-    elif not body.decision:
+    if not body.decision:
         raise HTTPException(400, "请选择批准或拒绝")
     elif request["type"] == "permissions":
         result = {
@@ -1364,11 +1587,10 @@ async def answer_request(tid: str, request_id: str, body: InteractionReply):
         "decline": "已拒绝本次操作",
         "cancel": "已拒绝并请求中止",
     }
-    # User input can contain secrets. Persist only the fact that a reply was sent.
     note(
         tid,
         "system",
-        "已回复 Codex 的问题" if request["type"] == "input" else labels[body.decision],
+        labels[body.decision],
         "interaction",
     )
     return {"ok": True}

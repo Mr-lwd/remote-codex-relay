@@ -24,7 +24,10 @@ from browser_queue import check_queue_composer
 from browser_goal_clear import check_goal_clear
 from browser_sessions import check_sessions
 from browser_typing import check_typing
+from browser_user_inputs import check_user_inputs
+from browser_dialog_keyboard import check_dialog_keyboard
 from browser_message_rendering import check_message_rendering
+from browser_reply_scroll import check_reply_scroll
 from browser_login import check_login_cookies
 from playwright.sync_api import sync_playwright, expect
 
@@ -366,6 +369,32 @@ def main():
                                 try:
                                     page = context.new_page()
                                     page.goto(base)
+                                    check_reply_scroll(page)
+                                    results.append(
+                                        f"reply scroll {width}x{height}: answer start, stream, manual reading, resize, history and sessions"
+                                    )
+                                finally:
+                                    context.close()
+                            for width, height in [(1440, 900), (390, 844)]:
+                                context = browser.new_context(
+                                    viewport={"width": width, "height": height}
+                                )
+                                try:
+                                    page = context.new_page()
+                                    page.goto(base)
+                                    check_user_inputs(page)
+                                    results.append(
+                                        f"questions {width}x{height}: options, freeform answers, draft sync and countdown"
+                                    )
+                                finally:
+                                    context.close()
+                            for width, height in [(1440, 900), (390, 844)]:
+                                context = browser.new_context(
+                                    viewport={"width": width, "height": height}
+                                )
+                                try:
+                                    page = context.new_page()
+                                    page.goto(base)
                                     typing = check_typing(page)
                                     (args.output / f"typing-{width}.json").write_text(
                                         json.dumps(typing, ensure_ascii=False, indent=2)
@@ -375,6 +404,26 @@ def main():
                                     )
                                 finally:
                                     context.close()
+                            context = browser.new_context(
+                                viewport={"width": 390, "height": 844},
+                                is_mobile=True,
+                                has_touch=True,
+                            )
+                            try:
+                                page = context.new_page()
+                                page.goto(base)
+                                dialogs = check_dialog_keyboard(page)
+                                (args.output / "dialog-keyboard.json").write_text(
+                                    json.dumps(dialogs, ensure_ascii=False, indent=2)
+                                )
+                                results.append(
+                                    "mobile viewport: pinch zoom preserves layout, keyboard edits and fractional resize noise"
+                                )
+                                results.append(
+                                    "mobile dialogs: repeated keyboard, nested dialogs, focus, overlays and streaming"
+                                )
+                            finally:
+                                context.close()
                         finally:
                             if not args.cdp:
                                 browser.close()

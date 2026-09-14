@@ -169,7 +169,253 @@ def check_typing(page, enforce=True):
     page.get_by_role("button", name="关闭图片预览", exact=True).click()
     expect(field).to_have_value("typingtest12")
     result["attachmentUpdatesAndPreviewPreserved"] = True
+    result["stability"] = check_typing_stability(page, detail(), enforce=enforce)
+    result["inputFocus"] = check_input_focus(page)
     metrics.detach()
+    return result
+
+
+def check_input_focus(page):
+    """Keep typing out of the global shortcut and deferred drawer-focus paths."""
+    field = page.get_by_label("向 Codex 发送消息", exact=True)
+    dialog = page.locator(".task-dialog")
+    field.fill("")
+    field.press_sequentially("next message", delay=15)
+    expect(field).to_have_value("next message")
+    expect(dialog).to_have_count(0)
+
+    page.locator(".composer .model-trigger").click()
+    page.keyboard.press("n")
+    page.evaluate("() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))")
+    expect(dialog).to_have_count(0)
+    expect(page.locator(".model-menu")).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(page.locator(".model-menu")).to_have_count(0)
+
+    # The shortcut must still work outside inputs, menus and composition.
+    page.evaluate("document.activeElement.blur()")
+    page.keyboard.press("n")
+    expect(dialog).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(dialog).to_have_count(0)
+    page.evaluate("""() => {
+      document.activeElement.blur();
+      for (const options of [{isComposing: true}, {keyCode: 229}, {handled: true}]) {
+        const event = new KeyboardEvent('keydown', {key: 'n', bubbles: true, cancelable: true, ...options});
+        if (options.handled) event.preventDefault();
+        document.body.dispatchEvent(event);
+      }
+    }""")
+    page.evaluate("() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))")
+    expect(dialog).to_have_count(0)
+
+    drawers = 0
+    for trigger, close in [
+        (".mobile-menu", "关闭会话列表"),
+        (".conversation-header .activity-toggle", "关闭执行详情"),
+    ]:
+        opener = page.locator(trigger)
+        if not opener.is_visible():
+            continue
+        opener.click()
+        # Focus as soon as the drawer is removed, before its deferred close
+        # callback. This deterministically exercises a fast click into the
+        # composer rather than relying on the machine's event-loop timing.
+        page.evaluate("""() => {
+          const drawer = document.querySelector('.responsive-drawer');
+          const input = document.querySelector('.composer textarea');
+          window.inputFocusProbe = {done: false, losses: 0};
+          new MutationObserver((_, observer) => {
+            if (drawer.isConnected) return;
+            observer.disconnect();
+            input.focus();
+            const end = performance.now() + 250;
+            const sample = () => {
+              if (document.activeElement !== input) inputFocusProbe.losses++;
+              if (performance.now() < end) requestAnimationFrame(sample);
+              else inputFocusProbe.done = true;
+            };
+            requestAnimationFrame(sample);
+          }).observe(document.body, {childList: true, subtree: true});
+        }""")
+        page.get_by_role("button", name=close, exact=True).click()
+        page.wait_for_function("window.inputFocusProbe.done")
+        assert page.evaluate("inputFocusProbe.losses") == 0, trigger
+        expect(field).to_be_focused()
+        field.fill("")
+        page.keyboard.type("next message")
+        expect(field).to_have_value("next message")
+        expect(dialog).to_have_count(0)
+
+        # Without a new focus choice, keyboard users still return to the opener.
+        opener.click()
+        page.keyboard.press("Escape")
+        expect(opener).to_be_focused()
+        drawers += 1
+    return {"shortcutIsolation": True, "drawerFocusChecks": drawers}
+
+
+def check_typing_stability(page, detail, *, enforce=True):
+    """Exercise typing and IME while identical snapshots and viewport resizes arrive."""
+    page.add_init_script("""window.stabilityProbe = {writes: 0, redundantWrites: 0, errors: []};
+      window.addEventListener('error', e => stabilityProbe.errors.push(e.message));
+      const descriptor = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollTop');
+      Object.defineProperty(Element.prototype, 'scrollTop', {...descriptor, set(value) {
+        if (this.classList.contains('messages')) {
+          stabilityProbe.writes++;
+          if (Math.abs(value - descriptor.get.call(this)) < 1) stabilityProbe.redundantWrites++;
+        }
+        descriptor.set.call(this, value);
+      }});
+    """)
+    # Start with automatic reply positioning enabled, rather than the paused
+    # reading state left by history loading and the attachment preview above.
+    page.reload()
+    field = page.get_by_label("向 Codex 发送消息", exact=True)
+    expect(page.locator("article.message")).to_have_count(len(detail["messages"]))
+    field.focus()
+    page.evaluate("async () => { await document.fonts.ready; }")
+    page.evaluate(
+        """payload => {
+          window.stabilityPayload = payload;
+          const app = document.querySelector('.app-shell');
+          const messages = document.querySelector('.messages');
+          const input = document.querySelector('.composer textarea');
+          const table = document.querySelector('.message table');
+          stabilityProbe.samples = 0;
+          stabilityProbe.missingFrames = 0;
+          stabilityProbe.domReplacements = 0;
+          stabilityProbe.focusLosses = 0;
+          stabilityProbe.writes = 0;
+          stabilityProbe.redundantWrites = 0;
+          window.stabilityActive = true;
+          const sample = () => {
+            if (!window.stabilityActive) return;
+            stabilityProbe.samples++;
+            if (!app.isConnected || !messages.isConnected || messages.clientHeight < 20)
+              stabilityProbe.missingFrames++;
+            if (input !== document.querySelector('.composer textarea') ||
+                table !== document.querySelector('.message table')) stabilityProbe.domReplacements++;
+            if (document.activeElement !== input) stabilityProbe.focusLosses++;
+            requestAnimationFrame(sample);
+          };
+          requestAnimationFrame(sample);
+          window.stabilityInterval = setInterval(() =>
+            window.typingStream.onmessage({data: JSON.stringify(window.stabilityPayload)}), 60);
+        }""",
+        {"threads": [detail], "selected": detail},
+    )
+    cdp = page.context.new_cdp_session(page)
+    frames = []
+
+    def capture(event):
+        frames.append(event["data"])
+        cdp.send("Page.screencastFrameAck", {"sessionId": event["sessionId"]})
+
+    cdp.on("Page.screencastFrame", capture)
+    cdp.send("Page.startScreencast", {"format": "jpeg", "quality": 70, "everyNthFrame": 3})
+    try:
+        text = "continuous typing while receiving live updates " * 2
+        field.press_sequentially(text, delay=20)
+        expect(field).to_have_value(text)
+        # Native composition, rather than replacing textarea text from JavaScript.
+        cdp.send(
+            "Input.imeSetComposition", {"text": "zhongwen", "selectionStart": 8, "selectionEnd": 8}
+        )
+        cdp.send(
+            "Input.imeSetComposition", {"text": "中文", "selectionStart": 2, "selectionEnd": 2}
+        )
+        cdp.send("Input.insertText", {"text": "中文"})
+        expect(field).to_have_value(text + "中文")
+        size = page.viewport_size.copy()
+        page.set_viewport_size({**size, "height": size["height"] - 160})
+        field.press("Shift+Enter")
+        field.press_sequentially("next line", delay=25)
+        page.set_viewport_size(size)
+        expect(field).to_have_value(text + "中文\nnext line")
+
+        # Deleting to empty swaps send/stop controls while a reply is running.
+        # Exercise native edits across line breaks, selection deletion, and IME
+        # cancellation as well as insertion; fill() bypasses these event paths.
+        field.press("Control+A")
+        field.press("Delete")
+        expect(field).to_have_value("")
+        for _ in range(3):
+            field.press_sequentially("edit next", delay=15)
+            field.press("Shift+Enter")
+            field.press_sequentially("line", delay=15)
+            for _ in range(14):
+                page.keyboard.press("Backspace")
+            expect(field).to_have_value("")
+        for composition in ["zhongwen", "中文", "中", ""]:
+            cdp.send(
+                "Input.imeSetComposition",
+                {
+                    "text": composition,
+                    "selectionStart": len(composition),
+                    "selectionEnd": len(composition),
+                },
+            )
+        cdp.send("Input.insertText", {"text": "中文删除测试"})
+        for _ in range(6):
+            page.keyboard.press("Backspace")
+        expect(field).to_have_value("")
+
+        # A changing reply must remain visible while the draft is being erased.
+        page.evaluate(r"""() => {
+          clearInterval(window.stabilityInterval);
+          window.stabilityInterval = setInterval(() => {
+            stabilityPayload.selected.messages.at(-1).text += '\n\n新的回复片段';
+            typingStream.onmessage({data: JSON.stringify(stabilityPayload)});
+          }, 100);
+        }""")
+        field.press_sequentially("delete during streaming", delay=15)
+        for _ in range(23):
+            page.keyboard.press("Backspace")
+        expect(field).to_have_value("")
+        expect(page.locator("article.message").last).to_contain_text("新的回复片段")
+        field.press_sequentially("/goal ", delay=20)
+        expect(page.locator(".command-token")).to_have_count(1)
+        field.press("Backspace")
+        expect(page.locator(".command-token")).to_have_count(0)
+        expect(field).to_have_value("")
+        page.evaluate(
+            "() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))"
+        )
+    finally:
+        page.evaluate("window.stabilityActive = false; clearInterval(window.stabilityInterval)")
+        cdp.send("Page.stopScreencast")
+        cdp.detach()
+
+    result = page.evaluate("stabilityProbe")
+    # Inspect actual compositor frames as well as DOM/focus continuity. Crop to
+    # the middle of the white conversation surface, avoiding the dark sidebar.
+    brightness = []
+    for frame in frames:
+        with Image.open(io.BytesIO(base64.b64decode(frame))) as image:
+            rgb = image.convert("RGB")
+            box = (
+                int(rgb.width * 0.4),
+                int(rgb.height * 0.2),
+                int(rgb.width * 0.85),
+                int(rgb.height * 0.7),
+            )
+            pixels = rgb.crop(box).resize((1, 1)).getpixel((0, 0))
+            brightness.append(sum(pixels) / 3)
+    result.update(
+        recordedFrames=len(frames),
+        darkestFrame=min(brightness, default=0),
+        deletionDuringStreaming=True,
+        imeDeletionAndCancellation=True,
+    )
+    if enforce:
+        assert result["samples"] >= 20 and result["recordedFrames"] >= 5, result
+        assert result["redundantWrites"] == 0, result
+        assert result["missingFrames"] == result["domReplacements"] == result["focusLosses"] == 0, (
+            result
+        )
+        assert not result["errors"], result
+        assert result["darkestFrame"] > 80, result
     return result
 
 

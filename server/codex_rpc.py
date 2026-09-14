@@ -7,6 +7,11 @@ import os
 import uuid
 from server.config import settings
 from server import __version__
+from server.user_inputs import normalize_questions
+
+
+class RPCRejected(RuntimeError):
+    """An explicit error response, as distinct from uncertain transport delivery."""
 
 
 class CodexRPC:
@@ -78,7 +83,7 @@ class CodexRPC:
                     if future and not future.done():
                         if "error" in value:
                             future.set_exception(
-                                RuntimeError(value["error"].get("message", "Codex 请求失败"))
+                                RPCRejected(value["error"].get("message", "Codex 请求失败"))
                             )
                         else:
                             future.set_result(value.get("result", {}))
@@ -160,13 +165,16 @@ async def receive_request(client, value):
         "type": REQUEST_METHODS[method],
         "threadId": params.get("threadId"),
         "turnId": params.get("turnId"),
+        "itemId": params.get("itemId"),
+        "source": "rpc",
+        "autoReply": item.get("type") != "mcpToolCall",
         "reason": params.get("reason"),
         "command": params.get("command"),
         "cwd": params.get("cwd"),
         "changes": item.get("changes", []),
         "grantRoot": params.get("grantRoot"),
         "permissions": params.get("permissions", {}),
-        "questions": params.get("questions", []),
+        "questions": normalize_questions(params.get("questions", [])),
         "responding": False,
     }
 
